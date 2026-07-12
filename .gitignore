@@ -1,0 +1,33 @@
+# Ambiente virtuale
+venv/
+env/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Log e dati
+logs/
+*.log
+*.csv
+data/
+*.db
+*.sqlite
+
+# File di sistema
+.DS_Store
+Thumbs.db
+
+# Librerie e file binari
+*.so
+*.dylib
+*.dll
+*.exe
+
+# File di configurazione sensibili
+.env
+*.key
+*.pem

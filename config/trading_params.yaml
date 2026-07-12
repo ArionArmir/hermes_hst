@@ -1,0 +1,16 @@
+leverage: 3
+stop_loss_pct: 0.05
+take_profit_pct: 0.04
+max_position_size_usdt: 50.0
+trailing_stop_pct: 0.015
+max_exposure: 0.5
+min_volatility_threshold: 0.001
+max_volatility_threshold: 0.02
+volatility_adjustment: true
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+timeframe: 1h
+ml_confidence_threshold: 0.55
+sentiment_weight: 0.3
