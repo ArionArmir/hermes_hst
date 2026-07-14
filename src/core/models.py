@@ -56,6 +56,12 @@ class Config(BaseModel):
     sentiment_weight: float = 0.3
     sentiment_asset_enabled: bool = True
     reverse_trading_enabled: bool = True
+    # Anti flip-flop (docs/IMPROVEMENT_PLAN.md, S3). Le feature cambiano solo
+    # alla chiusura di ogni candela: senza cooldown lo stesso segnale
+    # riaprirebbe una posizione appena chiusa entro pochi secondi.
+    reverse_cooldown_minutes: int = 15      # età minima della posizione per invertirla
+    reverse_confidence_margin: float = 0.05  # confidenza extra richiesta per invertire
+    entry_cooldown_minutes: int = 60        # attesa dopo una chiusura prima di rientrare
     pattern_confirmation_enabled: bool = True
     dynamic_exit_enabled: bool = True
     # Backstop temporale: deve coprire l'orizzonte del target del modello

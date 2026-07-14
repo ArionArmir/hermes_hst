@@ -37,6 +37,9 @@ class TradingEngine:
 
         self.positions: Dict[str, Position] = {}
         self.latest_prices: Dict[str, float] = {}
+        # Ultima chiusura per simbolo (solo in memoria: dopo un riavvio il
+        # cooldown di ri-ingresso riparte pulito, scelta accettabile)
+        self.last_close_time: Dict[str, datetime] = {}
         self.sentiment_score: float = 0.0
         self.sentiment_by_asset: Dict[str, float] = {}
         self.capital: float = 1000.0
@@ -75,6 +78,9 @@ class TradingEngine:
         self.pattern_confirmation_enabled = True
         self.dynamic_exit_enabled = True
         self.max_holding_minutes = 300
+        self.reverse_cooldown_minutes = 15
+        self.reverse_confidence_margin = 0.05
+        self.entry_cooldown_minutes = 60
 
         # Bootstrap REST dei modelli a candele: bastano ~30 candele per
         # scaldare ATR (finestra 14) e pattern (finestra 10) all'avvio,
@@ -148,6 +154,9 @@ class TradingEngine:
         self.pattern_confirmation_enabled = config.pattern_confirmation_enabled
         self.dynamic_exit_enabled = config.dynamic_exit_enabled
         self.max_holding_minutes = config.max_holding_minutes
+        self.reverse_cooldown_minutes = config.reverse_cooldown_minutes
+        self.reverse_confidence_margin = config.reverse_confidence_margin
+        self.entry_cooldown_minutes = config.entry_cooldown_minutes
         self._warn_if_holding_below_model_horizon(config)
         self.config = config
         self.config_version += 1
@@ -464,6 +473,7 @@ class TradingEngine:
 
         position.is_open = False
         self.capital += pnl
+        self.last_close_time[symbol] = datetime.now(timezone.utc)
         await self._save_positions_to_redis()
         await self.redis.set('capital', str(self.capital))
 
@@ -617,14 +627,51 @@ class TradingEngine:
                 logger.info(f"ℹ️ Confidenza bassa ({weighted_confidence:.2f}) → segnale ignorato")
                 return
 
-            # --- REVERSE TRADING ---
-            if self.reverse_trading_enabled:
-                if signal.symbol in self.positions and self.positions[signal.symbol].is_open:
-                    current_pos = self.positions[signal.symbol]
-                    if (signal.action == 'buy' and current_pos.side == 'short') or (signal.action == 'sell' and current_pos.side == 'long'):
-                        logger.info(f"🔄 Reverse trading: chiusura posizione {signal.symbol} {current_pos.side} per segnale opposto")
-                        await self._close_position(signal.symbol, reason="REVERSE_SIGNAL")
-                        await asyncio.sleep(0.5)
+            now = datetime.now(timezone.utc)
+            current_pos = self.positions.get(signal.symbol)
+            has_open = current_pos is not None and current_pos.is_open
+
+            # --- COOLDOWN DI RI-INGRESSO ---
+            # Le feature cambiano solo a candela chiusa: senza questo blocco,
+            # lo stesso segnale riaprirebbe una posizione appena chiusa (es.
+            # in stop loss) entro pochi secondi, ripagando fee e slippage.
+            if not has_open and signal.action in ('buy', 'sell'):
+                last_close = self.last_close_time.get(signal.symbol)
+                if last_close is not None:
+                    minutes_since_close = (now - last_close).total_seconds() / 60
+                    if minutes_since_close < self.entry_cooldown_minutes:
+                        logger.info(
+                            f"⏳ Cooldown ri-ingresso {signal.symbol}: chiuso {minutes_since_close:.1f} min fa "
+                            f"(< {self.entry_cooldown_minutes} min) → segnale ignorato"
+                        )
+                        return
+
+            # --- REVERSE TRADING (con cooldown e isteresi) ---
+            if self.reverse_trading_enabled and has_open:
+                if (signal.action == 'buy' and current_pos.side == 'short') or (signal.action == 'sell' and current_pos.side == 'long'):
+                    entry_time = current_pos.entry_time
+                    if entry_time.tzinfo is None:
+                        entry_time = entry_time.replace(tzinfo=timezone.utc)
+                    held_minutes = (now - entry_time).total_seconds() / 60
+                    if held_minutes < self.reverse_cooldown_minutes:
+                        logger.info(
+                            f"⏳ Reverse ignorato per {signal.symbol}: posizione aperta da "
+                            f"{held_minutes:.1f} min (< {self.reverse_cooldown_minutes} min)"
+                        )
+                        return
+                    # Isteresi: per INVERTIRE serve più convinzione che per
+                    # entrare, altrimenti prob oscillanti intorno alla soglia
+                    # producono flip-flop che paga fee a ogni giro.
+                    reverse_threshold = self.ml_confidence_threshold + self.reverse_confidence_margin
+                    if weighted_confidence < reverse_threshold:
+                        logger.info(
+                            f"⏳ Reverse ignorato per {signal.symbol}: confidenza {weighted_confidence:.2f} "
+                            f"sotto la soglia con isteresi ({reverse_threshold:.2f})"
+                        )
+                        return
+                    logger.info(f"🔄 Reverse trading: chiusura posizione {signal.symbol} {current_pos.side} per segnale opposto")
+                    await self._close_position(signal.symbol, reason="REVERSE_SIGNAL")
+                    await asyncio.sleep(0.5)
 
             if signal.action == 'buy':
                 await self._open_position(signal)

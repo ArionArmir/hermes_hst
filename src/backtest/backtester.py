@@ -19,7 +19,11 @@ Semplificazioni note (documentate, non nascoste):
 - niente sentiment (non esiste uno storico di sentiment);
 - simboli simulati indipendentemente, senza cap di margine incrociato: il
   sizing per trade è comunque quello dell'engine (min(nozionale max,
-  capitale × esposizione)).
+  capitale × esposizione));
+- i cooldown anti flip-flop dell'engine (reverse_cooldown_minutes,
+  entry_cooldown_minutes) sono sotto la granularità della barra 1h e non
+  vengono simulati: qui i segnali cambiano comunque solo a candela chiusa
+  e l'esecuzione avviene alla barra successiva.
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional

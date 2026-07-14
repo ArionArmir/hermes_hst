@@ -24,3 +24,8 @@ sentiment_weight: 0.3
 # Allineato all'orizzonte del target del modello: 5 candele × 1h.
 # Se cambi timeframe o TARGET_HORIZON_BARS, aggiorna anche questo.
 max_holding_minutes: 300
+# Anti flip-flop: età minima posizione per il reverse, confidenza extra
+# per invertire, attesa dopo una chiusura prima di rientrare sul simbolo
+reverse_cooldown_minutes: 15
+reverse_confidence_margin: 0.05
+entry_cooldown_minutes: 60
