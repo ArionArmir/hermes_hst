@@ -1,9 +1,9 @@
 """
 Modelli dati per Project Hermes HFT
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 class Position(BaseModel):
@@ -15,7 +15,7 @@ class Position(BaseModel):
     stop_loss: float
     take_profit: float
     trailing_stop: Optional[float] = None
-    entry_time: datetime = datetime.utcnow()
+    entry_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     pnl: float = 0.0
     is_open: bool = True
 
@@ -26,7 +26,7 @@ class Signal(BaseModel):
     symbol: str
     action: str  # 'buy', 'sell', 'hold', 'close'
     confidence: float  # 0-1
-    timestamp: datetime = datetime.utcnow()
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source: str  # 'ml' o 'sentiment'
 
     def to_dict(self) -> dict:
@@ -50,3 +50,4 @@ class Config(BaseModel):
     reverse_trading_enabled: bool = True
     pattern_confirmation_enabled: bool = True
     dynamic_exit_enabled: bool = True
+    max_holding_minutes: int = 60

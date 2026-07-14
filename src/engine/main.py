@@ -70,6 +70,7 @@ class TradingEngine:
         self.reverse_trading_enabled = True
         self.pattern_confirmation_enabled = True
         self.dynamic_exit_enabled = True
+        self.max_holding_minutes = 60
 
     async def initialize(self):
         logger.info("🚀 Avvio Trading Engine...")
@@ -125,6 +126,7 @@ class TradingEngine:
         self.reverse_trading_enabled = config.reverse_trading_enabled
         self.pattern_confirmation_enabled = config.pattern_confirmation_enabled
         self.dynamic_exit_enabled = config.dynamic_exit_enabled
+        self.max_holding_minutes = config.max_holding_minutes
         self.config = config
         self.config_version += 1
 
@@ -359,14 +361,29 @@ class TradingEngine:
     async def _position_monitor(self):
         while self.running:
             await asyncio.sleep(5)
-            for symbol, position in self.positions.items():
-                if position.is_open and symbol in self.latest_prices:
+            now = datetime.now(timezone.utc)
+            for symbol, position in list(self.positions.items()):
+                if not position.is_open:
+                    continue
+                if symbol in self.latest_prices:
                     price = self.latest_prices[symbol]
                     if position.side == 'long':
                         pnl = (price - position.entry_price) * position.quantity
                     else:
                         pnl = (position.entry_price - price) * position.quantity
                     position.pnl = pnl
+
+                entry_time = position.entry_time
+                if entry_time.tzinfo is None:
+                    entry_time = entry_time.replace(tzinfo=timezone.utc)
+                holding_minutes = (now - entry_time).total_seconds() / 60
+                if holding_minutes >= self.max_holding_minutes:
+                    logger.info(
+                        f"⏰ {symbol}: durata massima di holding superata "
+                        f"({holding_minutes:.1f} min >= {self.max_holding_minutes} min), chiusura"
+                    )
+                    await self._close_position(symbol, reason="MAX_HOLDING")
+
             await self.redis.set('heartbeat_engine', datetime.now(timezone.utc).isoformat())
 
     async def _close_all_positions(self, reason: str):
