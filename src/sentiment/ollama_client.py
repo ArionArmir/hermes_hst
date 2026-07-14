@@ -25,7 +25,13 @@ class OllamaSentiment:
         self.redis = RedisClient(host="localhost")
         await self.redis.connect()
         asyncio.create_task(self._sentiment_loop())
+        asyncio.create_task(self._heartbeat_loop())
         logger.info("✅ Agente Sentiment avviato con fonti RSS")
+
+    async def _heartbeat_loop(self):
+        while self.running:
+            await self.redis.set('heartbeat_sentiment', datetime.now(timezone.utc).isoformat())
+            await asyncio.sleep(15)
 
     async def _analyze_sentiment(self, news_by_asset: dict) -> dict:
         prompt_template = """
