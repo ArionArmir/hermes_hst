@@ -95,14 +95,8 @@ class MLInference:
 
                 # Verifica le posizioni aperte una volta per ciclo
                 positions_data = await self.redis.get_json('positions')
-                open_positions = set(positions_data.keys()) if positions_data else set()
 
                 for symbol in self.symbols:
-                    # Salta se il simbolo ha già una posizione aperta
-                    if symbol.upper() in open_positions:
-                        logger.debug(f"⏭️ Posizione già aperta per {symbol.upper()}, segnale ignorato")
-                        continue
-
                     fe = self.feature_engines.get(symbol)
                     if fe is None or not fe.is_ready():
                         continue
@@ -139,6 +133,19 @@ class MLInference:
                     # Non inviare segnali "hold" per non inquinare i log
                     if action == "hold":
                         continue
+
+                    current_position = positions_data.get(symbol.upper()) if positions_data else None
+                    if current_position:
+                        implied_side = "long" if action == "buy" else "short"
+                        if current_position.get("side") == implied_side:
+                            logger.debug(
+                                f"⏭️ Posizione già aperta in {implied_side} per {symbol.upper()}, segnale ignorato"
+                            )
+                            continue
+                        logger.info(
+                            f"🔄 Segnale {action} per {symbol.upper()} in direzione opposta alla posizione "
+                            f"aperta ({current_position.get('side')}): pubblicato per valutazione reverse trading"
+                        )
 
                     signal = Signal(
                         symbol=symbol.upper(),
