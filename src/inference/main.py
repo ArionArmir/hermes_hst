@@ -74,6 +74,8 @@ class MLInference:
                                 symbol = stream.replace('@trade', '').lower()
                                 price = float(trade['p'])
                                 volume = float(trade['q'])
+                                if price <= 0 or volume <= 0:
+                                    continue
                                 self.latest_prices[symbol] = price
                                 if symbol in self.feature_engines:
                                     self.feature_engines[symbol].add_tick(price, volume, trade.get('T'))

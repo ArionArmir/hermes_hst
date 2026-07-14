@@ -40,6 +40,8 @@ class OHLCAggregator:
         return datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)
 
     def add_tick(self, symbol: str, price: float, volume: float, timestamp: Optional[datetime] = None):
+        if price <= 0 or volume <= 0:
+            return
         ts = timestamp or datetime.now(timezone.utc)
         bucket_time = self._bucket_start(ts)
 

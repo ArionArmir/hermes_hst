@@ -178,6 +178,8 @@ class TradingEngine:
                                 symbol = stream.replace('@trade', '').upper()
                                 price = float(trade['p'])
                                 volume = float(trade['q'])
+                                if price <= 0 or volume <= 0:
+                                    continue
                                 high = price * 1.002
                                 low = price * 0.998
 
