@@ -1,12 +1,15 @@
 """
-Candele OHLCV live per l'inference, via REST Binance Futures (fapi/v1/klines).
+Candele OHLCV live via REST Binance Futures (fapi/v1/klines).
 
-Perché REST e non i tick del WebSocket: il modello è addestrato su candele
-(stesso timeframe di config), quindi anche l'inference deve calcolare le
-feature su candele identiche — ricostruirle dai tick richiederebbe ore di
-warmup a ogni riavvio e reintrodurrebbe il rischio di skew. Una chiamata al
-minuto per simbolo è trascurabile per i rate limit (peso klines ≈ 5 su
-2400/min disponibili).
+Due consumatori:
+- inference: feature del modello sulle stesse candele del training
+  (ricostruirle dai tick richiederebbe ore di warmup a ogni riavvio e
+  reintrodurrebbe il rischio di train/serve skew);
+- engine: bootstrap di ATRExitModel e VolumePatternAnalyzer all'avvio,
+  che poi restano aggiornati dallo stream WebSocket @kline.
+
+Una chiamata al minuto per simbolo è trascurabile per i rate limit
+(peso klines ≈ 5 su 2400/min disponibili).
 """
 import time
 from typing import Dict, Optional

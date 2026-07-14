@@ -22,6 +22,7 @@ from src.core.models import Position, Signal, Config
 from src.shared.redis_client import RedisClient
 from src.shared.notifier import notifier
 from src.shared.json_encoder import to_json
+from src.shared.candle_feed import CandleFeed
 from src.exit_model import ATRExitModel
 from src.volume_pattern import VolumePatternAnalyzer
 
@@ -103,11 +104,17 @@ class TradingEngine:
         self.dynamic_exit_enabled = True
         self.max_holding_minutes = 300
 
+        # Bootstrap REST dei modelli a candele: bastano ~30 candele per
+        # scaldare ATR (finestra 14) e pattern (finestra 10) all'avvio,
+        # poi restano aggiornati dallo stream WebSocket @kline.
+        self.candle_feed = CandleFeed(interval="1h", limit=30)
+
     async def initialize(self):
         logger.info("🚀 Avvio Trading Engine...")
         self.redis = RedisClient(host="localhost")
         await self.redis.connect()
         await self._load_config_from_redis()
+        await self._bootstrap_candle_models()
         await self._load_positions_from_redis()
 
         self.ws_task = asyncio.create_task(self._websocket_loop())
@@ -158,6 +165,9 @@ class TradingEngine:
                 self.exit_models[symbol_upper] = _build_exit_model(symbol_upper)
             if symbol_upper not in self.pattern_models:
                 self.pattern_models[symbol_upper] = VolumePatternAnalyzer(window=10)
+        if config.timeframe != self.candle_feed.interval:
+            logger.info(f"🕐 Timeframe candele: {self.candle_feed.interval} → {config.timeframe}")
+            self.candle_feed = CandleFeed(interval=config.timeframe, limit=30)
         self.ml_confidence_threshold = config.ml_confidence_threshold
         self.sentiment_weight = config.sentiment_weight
         self.reverse_trading_enabled = config.reverse_trading_enabled
@@ -215,11 +225,64 @@ class TradingEngine:
             logger.error(f"❌ Fallback REST fallito per {symbol}: {e}")
             return 0.0
 
+    def _ingest_candle(self, symbol_upper: str, close: float, high: float, low: float, volume: float):
+        """Unico punto di alimentazione di ATRExitModel e VolumePatternAnalyzer:
+        SOLO candele reali (REST bootstrap o kline WebSocket chiuse), mai tick
+        con high/low sintetici — l'ATR su range inventati era il difetto S6
+        di docs/IMPROVEMENT_PLAN.md."""
+        exit_model = self.exit_models.get(symbol_upper)
+        pattern_model = self.pattern_models.get(symbol_upper)
+        if exit_model:
+            exit_model.add_price(close, high, low)
+        if pattern_model:
+            pattern_model.add_data(close, volume, high, low)
+
+    def _candle_models_warm(self, symbol_upper: str) -> bool:
+        exit_model = self.exit_models.get(symbol_upper)
+        return exit_model is not None and len(exit_model.prices) > exit_model.window
+
+    async def _bootstrap_candle_models(self):
+        """Scalda ATR e pattern con le ultime candele chiuse via REST: senza
+        bootstrap, dopo un riavvio servirebbero ~15 candele (15 ore a 1h)
+        prima di avere un ATR reale. Idempotente: salta i simboli già caldi,
+        quindi è richiamabile anche dopo un reload di config che aggiunge
+        simboli."""
+        for symbol in self.symbols:
+            symbol_upper = symbol.upper()
+            if self._candle_models_warm(symbol_upper):
+                continue
+            candles = await self.candle_feed.get_candles(symbol_upper)
+            if candles is None or candles.empty:
+                logger.warning(f"⚠️ Bootstrap candele fallito per {symbol_upper}: ATR in warmup dallo stream")
+                continue
+            for row in candles.itertuples():
+                self._ingest_candle(symbol_upper, row.close, row.high, row.low, row.volume)
+            logger.info(f"🕯️ {symbol_upper}: modelli ATR/pattern inizializzati con {len(candles)} candele reali")
+
+    def _on_kline(self, kline: dict):
+        """Gestisce un evento kline del WebSocket. Solo le candele chiuse
+        (x=true) alimentano i modelli: quella in formazione cambia a ogni
+        tick e produrrebbe range parziali."""
+        if not kline.get('x'):
+            return
+        try:
+            self._ingest_candle(
+                kline['s'],
+                float(kline['c']),
+                float(kline['h']),
+                float(kline['l']),
+                float(kline['v']),
+            )
+        except (KeyError, ValueError) as e:
+            logger.error(f"❌ Kline malformata: {e}")
+
     async def _websocket_loop(self):
         while self.running:
             try:
                 logger.info("🔌 Connessione WebSocket Binance...")
+                kline_interval = self.config.timeframe if self.config else "1h"
                 stream_names = [f"{symbol}@trade" for symbol in self.symbols]
+                stream_names += [f"{symbol}@kline_{kline_interval}" for symbol in self.symbols]
                 stream_url = f"{self.ws_url}?streams={'/'.join(stream_names)}"
 
                 async with websockets.connect(stream_url, ping_interval=30, ping_timeout=10) as self.ws:
@@ -230,22 +293,19 @@ class TradingEngine:
                             msg = await self.ws.recv()
                             data = json.loads(msg)
                             if 'data' in data:
-                                trade = data['data']
                                 stream = data.get('stream', '')
+                                if '@kline' in stream:
+                                    self._on_kline(data['data'].get('k') or {})
+                                    continue
+
+                                trade = data['data']
                                 symbol = stream.replace('@trade', '').upper()
                                 price = float(trade['p'])
                                 volume = float(trade['q'])
                                 if price <= 0 or volume <= 0:
                                     continue
-                                high = price * 1.002
-                                low = price * 0.998
 
                                 exit_model = self.exit_models.get(symbol)
-                                pattern_model = self.pattern_models.get(symbol)
-                                if exit_model:
-                                    exit_model.add_price(price, high, low)
-                                if pattern_model:
-                                    pattern_model.add_data(price, volume, high, low)
                                 self.latest_prices[symbol] = price
                                 await self.redis.set(f"latest_price_{symbol}", str(price))
                                 await self.redis.set('last_tick_engine', datetime.now(timezone.utc).isoformat())
@@ -498,6 +558,9 @@ class TradingEngine:
                     elif channel == 'config_updated':
                         logger.info("🔄 Configurazione aggiornata, ricarico...")
                         await self._load_config_from_redis()
+                        # Simboli eventualmente aggiunti partono con ATR/pattern
+                        # già caldi (idempotente: i simboli già caldi vengono saltati)
+                        await self._bootstrap_candle_models()
                     elif channel == 'engine_commands':
                         try:
                             command = json.loads(data)

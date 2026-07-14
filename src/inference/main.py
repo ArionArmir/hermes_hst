@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from src.core.models import Signal, Config
 from src.shared.redis_client import RedisClient
 from src.shared.features import compute_latest_features, FEATURE_COLS
-from src.inference.candle_feed import CandleFeed
+from src.shared.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
 
 class MLInference:
