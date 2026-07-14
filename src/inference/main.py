@@ -13,9 +13,11 @@ import joblib
 import numpy as np
 import websockets
 from loguru import logger
+from datetime import datetime, timezone
 from src.core.models import Signal
 from src.shared.redis_client import RedisClient
 from src.inference.feature_engine import FeatureEngine
+from src.shared.ohlc_aggregator import OHLCAggregator
 
 class MLInference:
     def __init__(self):
@@ -27,6 +29,7 @@ class MLInference:
         self.ws_url = "wss://fstream.binance.com/stream"
         self.symbols = ["btcusdt", "ethusdt", "solusdt"]
         self.feature_engines = {symbol: FeatureEngine(window=100) for symbol in self.symbols}
+        self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
 
     async def initialize(self):
@@ -74,6 +77,7 @@ class MLInference:
                                 self.latest_prices[symbol] = price
                                 if symbol in self.feature_engines:
                                     self.feature_engines[symbol].add_tick(price, volume, trade.get('T'))
+                                self.ohlc_aggregator.add_tick(symbol.upper(), price, volume)
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
                             await asyncio.sleep(1)
@@ -83,6 +87,7 @@ class MLInference:
 
     async def _inference_loop(self):
         while self.running:
+            await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
             try:
                 if self.model is None:
                     await asyncio.sleep(1)
