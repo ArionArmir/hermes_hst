@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
 import os
@@ -13,21 +12,23 @@ from src.training.feature_engine import prepare_train_data
 
 class Trainer:
     def __init__(self):
-        self.symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
         self.redis = redis.Redis(host='localhost', port=6379, decode_responses=True)
         self.model_path = "config/models/champion.pkl"
         self.challenger_path = "config/models/challenger.pkl"
 
-    def train(self, df: pd.DataFrame, symbol: str = "BTCUSDT"):
-        """Addestra un nuovo modello XGBoost"""
-        logger.info(f"🧠 Avvio training su {symbol}...")
-        X, y = prepare_train_data(df)
+    def train(self, X_train: pd.DataFrame, X_val: pd.DataFrame, y_train: pd.Series, y_val: pd.Series):
+        """Addestra un nuovo modello XGBoost su train/validation già pronti e già
+        divisi (Approccio A: possono provenire dalla concatenazione di più
+        simboli). Lo split va fatto PRIMA per singolo simbolo (rispettando
+        l'ordine temporale di ciascuno) e poi concatenato separatamente per
+        train e per validation — uno split unico sul dataset già concatenato
+        con shuffle=False finirebbe per validare quasi solo sull'ultimo
+        simbolo appeso, non su un campione rappresentativo di tutti."""
+        logger.info(f"🧠 Avvio training su {len(X_train)} righe (validation: {len(X_val)})...")
 
-        if len(X) < 100:
+        if len(X_train) < 100:
             logger.error("❌ Dati insufficienti per training")
             return False
-
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
 
         model = xgb.XGBClassifier(
             n_estimators=100,
@@ -66,21 +67,6 @@ class Trainer:
         self.redis.publish('model_swap', self.model_path)
         logger.info("🔄 Modello swapped via Redis")
 
-if __name__ == "__main__":
-    from src.data_collector import DataCollector
-
-    collector = DataCollector()
-    trainer = Trainer()
-
-    symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-    for symbol in symbols:
-        symbol_clean = symbol.replace('/', '')
-        df = collector.load_historical(symbol_clean, timeframe="1h")
-        if df.empty:
-            logger.info(f"📥 Scarico {symbol}...")
-            df = collector.download_historical(symbol, timeframe='1h', days=365)
-            collector.save_to_parquet(df, symbol_clean, timeframe="1h")
-        if not df.empty:
-            trainer.train(df, symbol=symbol_clean)
-        else:
-            logger.error(f"❌ Impossibile scaricare {symbol}")
+# Il punto d'ingresso per addestrare su tutti i simboli configurati è
+# train_all_models.py (repo root): concatena le feature di ogni simbolo in
+# config/trading_params.yaml e addestra un unico champion (Approccio A).
