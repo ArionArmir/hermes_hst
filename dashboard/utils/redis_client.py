@@ -63,11 +63,16 @@ def get_sentiment_score() -> Optional[float]:
 
 def get_sentiment_by_asset() -> dict:
     """sentiment_asset è solo pubblicato via pubsub: gli unici valori persistiti
-    sono le chiavi sentiment_btc/eth/sol scritte da src/sentiment/ollama_client.py."""
+    sono le chiavi sentiment_{asset} scritte da src/sentiment/ollama_client.py
+    (oggi solo per btc/eth/sol: un simbolo configurato senza sentiment dedicato
+    semplicemente non compare nel risultato, nessun errore)."""
     client = get_client()
+    config = get_trading_config()
+    symbols = (config or {}).get("symbols") or ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assets = [s.upper().replace("USDT", "") for s in symbols]
     result = {}
-    for asset in ("btc", "eth", "sol"):
-        raw = client.get(f"sentiment_{asset}")
+    for asset in assets:
+        raw = client.get(f"sentiment_{asset.lower()}")
         if raw is not None:
-            result[asset.upper()] = float(raw)
+            result[asset] = float(raw)
     return result

@@ -9,12 +9,20 @@ from utils.redis_client import (
     get_positions,
     get_sentiment_by_asset,
     get_sentiment_score,
+    get_trading_config,
 )
 
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 SERVICES = ["engine", "inference", "sentiment"]
 STALE_AFTER_SECONDS = {"engine": 20, "inference": 20, "sentiment": 60}
 STATUS_ICON = {"ok": "🟢", "stale": "🟡", "down": "🔴"}
+
+
+def _get_symbols() -> list[str]:
+    config = get_trading_config()
+    if config and config.get("symbols"):
+        return [s.upper() for s in config["symbols"]]
+    return DEFAULT_SYMBOLS
 
 
 @st.fragment(run_every="5s")
@@ -80,8 +88,9 @@ def render_positions():
 
 @st.fragment(run_every="15s")
 def render_candles():
-    tabs = st.tabs(SYMBOLS, on_change="rerun")
-    for tab, symbol in zip(tabs, SYMBOLS):
+    symbols = _get_symbols()
+    tabs = st.tabs(symbols, on_change="rerun")
+    for tab, symbol in zip(tabs, symbols):
         if tab.open:
             with tab:
                 df = ohlc.get_candles(symbol)
