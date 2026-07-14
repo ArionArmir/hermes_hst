@@ -11,6 +11,10 @@ symbols:
   - BTCUSDT
   - ETHUSDT
   - SOLUSDT
+  - TRXUSDT
+  - DOGEUSDT
+  - BNBUSDT
+  - XRPUSDT
 timeframe: 1h
 ml_confidence_threshold: 0.55
 sentiment_weight: 0.3
