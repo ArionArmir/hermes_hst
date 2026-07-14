@@ -82,16 +82,31 @@ class MLInference:
 
     async def _redis_listener(self):
         pubsub = await self.redis.subscribe('config_updated')
+        await self.redis.subscribe('model_swap')
         try:
             async for message in pubsub.listen():
                 if message['type'] == 'message':
-                    logger.info("🔄 Configurazione aggiornata, ricarico...")
-                    await self._load_config_from_redis()
+                    await self._on_pubsub_message(message['channel'])
         except Exception as e:
             logger.error(f"❌ Errore Redis listener: {e}")
             if self.running:
                 await asyncio.sleep(5)
                 asyncio.create_task(self._redis_listener())
+
+    async def _on_pubsub_message(self, channel: str):
+        if isinstance(channel, bytes):
+            channel = channel.decode()
+        if channel == 'config_updated':
+            logger.info("🔄 Configurazione aggiornata, ricarico...")
+            await self._load_config_from_redis()
+        elif channel == 'model_swap':
+            # Il trainer pubblica qui dopo ogni promozione del challenger:
+            # il nuovo champion entra in servizio senza riavviare il processo.
+            # _load_model rivalida feature e classi: un modello incompatibile
+            # viene rifiutato (model=None, nessun segnale) invece di produrre
+            # predizioni senza senso.
+            logger.info("🔄 Nuovo champion pubblicato dal trainer, ricarico il modello...")
+            self._load_model()
 
     def _load_model(self):
         try:
