@@ -8,9 +8,11 @@ import pandas as pd
 
 from src.shared.features import compute_features, FEATURE_COLS
 
-# Orizzonte del target: +0,5% entro 5 candele. NB: disallineato rispetto a
-# max_holding_minutes dell'engine — da correggere nel punto 2 del piano
-# (docs/IMPROVEMENT_PLAN.md, S1).
+# Orizzonte del target: +0,5% entro 5 candele di config.timeframe. È
+# l'orizzonte dell'INTERA strategia: max_holding_minutes dell'engine deve
+# coprire TARGET_HORIZON_BARS × timeframe (5 × 1h = 300 min), altrimenti le
+# posizioni vengono chiuse prima che la predizione abbia il tempo di
+# realizzarsi (l'engine lo verifica in _apply_config e logga un warning).
 TARGET_HORIZON_BARS = 5
 TARGET_THRESHOLD = 0.005
 

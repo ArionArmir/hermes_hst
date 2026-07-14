@@ -101,7 +101,7 @@ class TradingEngine:
         self.reverse_trading_enabled = True
         self.pattern_confirmation_enabled = True
         self.dynamic_exit_enabled = True
-        self.max_holding_minutes = 60
+        self.max_holding_minutes = 300
 
     async def initialize(self):
         logger.info("🚀 Avvio Trading Engine...")
@@ -164,8 +164,28 @@ class TradingEngine:
         self.pattern_confirmation_enabled = config.pattern_confirmation_enabled
         self.dynamic_exit_enabled = config.dynamic_exit_enabled
         self.max_holding_minutes = config.max_holding_minutes
+        self._warn_if_holding_below_model_horizon(config)
         self.config = config
         self.config_version += 1
+
+    def _warn_if_holding_below_model_horizon(self, config: Config):
+        """Il modello predice il rendimento su TARGET_HORIZON_BARS candele:
+        un max_holding più corto chiude le posizioni prima che la predizione
+        possa realizzarsi (è il bug che rendeva la strategia un "ruota ogni
+        ora" — vedi docs/IMPROVEMENT_PLAN.md, S1)."""
+        try:
+            from src.training.feature_engine import TARGET_HORIZON_BARS
+            from src.shared.features import timeframe_minutes
+            horizon_minutes = TARGET_HORIZON_BARS * timeframe_minutes(config.timeframe)
+        except ValueError as e:
+            logger.warning(f"⚠️ Impossibile verificare l'orizzonte del modello: {e}")
+            return
+        if config.max_holding_minutes < horizon_minutes:
+            logger.warning(
+                f"⚠️ max_holding_minutes={config.max_holding_minutes} < orizzonte del modello "
+                f"({TARGET_HORIZON_BARS} barre × {config.timeframe} = {horizon_minutes} min): "
+                f"le posizioni verranno chiuse prima che la predizione possa realizzarsi"
+            )
 
     async def _load_positions_from_redis(self):
         positions_data = await self.redis.get_json('positions')

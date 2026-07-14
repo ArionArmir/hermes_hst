@@ -53,4 +53,7 @@ class Config(BaseModel):
     reverse_trading_enabled: bool = True
     pattern_confirmation_enabled: bool = True
     dynamic_exit_enabled: bool = True
-    max_holding_minutes: int = 60
+    # Backstop temporale: deve coprire l'orizzonte del target del modello
+    # (TARGET_HORIZON_BARS × timeframe = 5 × 1h = 300 min), altrimenti le
+    # posizioni vengono chiuse prima che la predizione possa realizzarsi.
+    max_holding_minutes: int = 300

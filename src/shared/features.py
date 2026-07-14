@@ -42,6 +42,19 @@ FEATURE_COLS = [
 # 64 lascia margine. Sotto questa soglia l'ultima riga contiene NaN.
 MIN_CANDLES = 64
 
+_TIMEFRAME_UNIT_MINUTES = {'m': 1, 'h': 60, 'd': 1440}
+
+
+def timeframe_minutes(timeframe: str) -> int:
+    """'1m' → 1, '15m' → 15, '1h' → 60, '4h' → 240, '1d' → 1440.
+    Solleva ValueError su formati non riconosciuti: meglio fallire subito che
+    lasciare che training e inference lavorino su barre diverse."""
+    tf = timeframe.strip().lower()
+    unit = _TIMEFRAME_UNIT_MINUTES.get(tf[-1]) if tf else None
+    if unit is None or not tf[:-1].isdigit():
+        raise ValueError(f"Timeframe non riconosciuto: {timeframe!r}")
+    return int(tf[:-1]) * unit
+
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calcola le feature su candele OHLCV (colonne: open, high, low, close,
