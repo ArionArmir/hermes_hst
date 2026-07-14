@@ -39,6 +39,13 @@ def get_heartbeat(service: str) -> Optional[str]:
     return get_client().get(f"heartbeat_{service}")
 
 
+def get_last_tick(service: str) -> Optional[str]:
+    """Timestamp dell'ultimo tick WebSocket realmente elaborato da engine/inference
+    (distinto dall'heartbeat: un processo può essere vivo e loggare regolarmente
+    pur avendo una connessione WebSocket "zombie" che non consegna più dati)."""
+    return get_client().get(f"last_tick_{service}")
+
+
 def get_trading_config() -> Optional[dict]:
     return get_json("trading_config")
 

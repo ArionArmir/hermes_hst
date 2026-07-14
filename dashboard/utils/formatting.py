@@ -68,11 +68,14 @@ def compute_position_row(symbol: str, pos: dict, current_price: float) -> dict:
     }
 
 
+def age_seconds(iso_timestamp: str) -> float:
+    return (pd.Timestamp.now(tz="UTC") - pd.Timestamp(iso_timestamp)).total_seconds()
+
+
 def heartbeat_status(heartbeat_iso: str, is_running: bool, stale_after_seconds: float) -> str:
     """Ritorna 'ok' / 'stale' / 'down' incrociando processo OS e freschezza dell'heartbeat."""
     if not is_running:
         return "down"
     if not heartbeat_iso:
         return "stale"
-    age = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(heartbeat_iso)).total_seconds()
-    return "ok" if age <= stale_after_seconds else "stale"
+    return "ok" if age_seconds(heartbeat_iso) <= stale_after_seconds else "stale"

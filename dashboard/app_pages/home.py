@@ -5,6 +5,7 @@ import streamlit as st
 from utils import formatting, ohlc, process_manager
 from utils.redis_client import (
     get_heartbeat,
+    get_last_tick,
     get_latest_price,
     get_positions,
     get_sentiment_by_asset,
@@ -15,7 +16,9 @@ from utils.redis_client import (
 DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 SERVICES = ["engine", "inference", "sentiment"]
 STALE_AFTER_SECONDS = {"engine": 20, "inference": 20, "sentiment": 60}
+TICK_STALE_AFTER_SECONDS = 30
 STATUS_ICON = {"ok": "🟢", "stale": "🟡", "down": "🔴"}
+SERVICES_WITH_TICK_FEED = ("engine", "inference")
 
 
 def _get_symbols() -> list[str]:
@@ -37,6 +40,14 @@ def render_process_status():
             with st.container(border=True):
                 st.markdown(f"**{STATUS_ICON[state]} {service.capitalize()}**")
                 st.caption(f"PID: {proc_status['pids'] or '—'}")
+                if service in SERVICES_WITH_TICK_FEED:
+                    last_tick = get_last_tick(service)
+                    if last_tick:
+                        tick_age = formatting.age_seconds(last_tick)
+                        tick_icon = "🟢" if tick_age <= TICK_STALE_AFTER_SECONDS else "🔴"
+                        st.caption(f"{tick_icon} Ultimo tick: {tick_age:.0f}s fa")
+                    elif proc_status["running"]:
+                        st.caption("🔴 Nessun tick ricevuto")
 
 
 @st.fragment(run_every="5s")

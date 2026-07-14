@@ -228,6 +228,7 @@ class TradingEngine:
                                     pattern_model.add_data(price, volume, high, low)
                                 self.latest_prices[symbol] = price
                                 await self.redis.set(f"latest_price_{symbol}", str(price))
+                                await self.redis.set('last_tick_engine', datetime.now(timezone.utc).isoformat())
 
                                 await self._check_exit_conditions(symbol, price)
 
@@ -244,6 +245,11 @@ class TradingEngine:
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
                             await asyncio.sleep(1)
+                            # La connessione può essere morta (es. "no close frame
+                            # received or sent"): ritentare .recv() sullo stesso
+                            # oggetto fallirebbe identicamente per sempre. Usciamo
+                            # dal ciclo interno così quello esterno ne apre una nuova.
+                            break
             except Exception as e:
                 logger.error(f"❌ Errore connessione WebSocket: {e}")
                 await asyncio.sleep(5)

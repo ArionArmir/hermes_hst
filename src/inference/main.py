@@ -107,7 +107,7 @@ class MLInference:
                 stream_names = [f"{symbol}@trade" for symbol in self.symbols]
                 stream_url = f"{self.ws_url}?streams={'/'.join(stream_names)}"
 
-                async with websockets.connect(stream_url) as self.ws:
+                async with websockets.connect(stream_url, ping_interval=30, ping_timeout=10) as self.ws:
                     logger.info("✅ WebSocket Binance connesso")
                     while self.running:
                         try:
@@ -122,12 +122,19 @@ class MLInference:
                                 if price <= 0 or volume <= 0:
                                     continue
                                 self.latest_prices[symbol] = price
+                                await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
                                 if symbol in self.feature_engines:
                                     self.feature_engines[symbol].add_tick(price, volume, trade.get('T'))
                                 self.ohlc_aggregator.add_tick(symbol.upper(), price, volume)
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
                             await asyncio.sleep(1)
+                            # Stessa ragione dell'engine: la connessione può essere
+                            # morta senza sollevare più eccezioni distinguibili;
+                            # usciamo per farla riaprire dal ciclo esterno. Il
+                            # ping_interval/ping_timeout sopra serve a rilevare
+                            # anche connessioni "zombie" che non erroravano affatto.
+                            break
             except Exception as e:
                 logger.error(f"❌ Errore connessione WebSocket: {e}")
                 await asyncio.sleep(5)
