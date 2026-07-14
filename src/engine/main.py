@@ -121,6 +121,12 @@ class TradingEngine:
         self.trailing_stop_pct = config.trailing_stop_pct
         self.max_exposure = config.max_exposure
         self.symbols = [s.lower() for s in config.symbols]
+        for symbol in self.symbols:
+            symbol_upper = symbol.upper()
+            if symbol_upper not in self.exit_models:
+                self.exit_models[symbol_upper] = ATRExitModel(atr_multiplier_sl=5.0, atr_multiplier_tp=5.5)
+            if symbol_upper not in self.pattern_models:
+                self.pattern_models[symbol_upper] = VolumePatternAnalyzer(window=10)
         self.ml_confidence_threshold = config.ml_confidence_threshold
         self.sentiment_weight = config.sentiment_weight
         self.reverse_trading_enabled = config.reverse_trading_enabled
