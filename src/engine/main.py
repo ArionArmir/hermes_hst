@@ -122,6 +122,9 @@ class TradingEngine:
         self.symbols = [s.lower() for s in config.symbols]
         self.ml_confidence_threshold = config.ml_confidence_threshold
         self.sentiment_weight = config.sentiment_weight
+        self.reverse_trading_enabled = config.reverse_trading_enabled
+        self.pattern_confirmation_enabled = config.pattern_confirmation_enabled
+        self.dynamic_exit_enabled = config.dynamic_exit_enabled
         self.config = config
         self.config_version += 1
 
@@ -364,12 +367,19 @@ class TradingEngine:
                     else:
                         pnl = (position.entry_price - price) * position.quantity
                     position.pnl = pnl
+            await self.redis.set('heartbeat_engine', datetime.now(timezone.utc).isoformat())
+
+    async def _close_all_positions(self, reason: str):
+        for symbol in list(self.positions.keys()):
+            if self.positions[symbol].is_open:
+                await self._close_position(symbol, reason=reason)
 
     async def _redis_listener(self):
         pubsub = await self.redis.subscribe('ml_signals')
         await self.redis.subscribe('sentiment_update')
         await self.redis.subscribe('config_updated')
         await self.redis.subscribe('sentiment_asset')
+        await self.redis.subscribe('engine_commands')
 
         try:
             async for message in pubsub.listen():
@@ -406,6 +416,15 @@ class TradingEngine:
                     elif channel == 'config_updated':
                         logger.info("🔄 Configurazione aggiornata, ricarico...")
                         await self._load_config_from_redis()
+                    elif channel == 'engine_commands':
+                        try:
+                            command = json.loads(data)
+                            if command.get('action') == 'close_all':
+                                reason = command.get('reason', 'MANUAL_RESET')
+                                logger.warning(f"⛔ Comando ricevuto: chiusura di tutte le posizioni ({reason})")
+                                await self._close_all_positions(reason)
+                        except Exception as e:
+                            logger.error(f"❌ Errore comando engine: {e}")
         except Exception as e:
             logger.error(f"❌ Errore Redis listener: {e}")
             if self.running:

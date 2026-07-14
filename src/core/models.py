@@ -47,3 +47,6 @@ class Config(BaseModel):
     ml_confidence_threshold: float = 0.55
     sentiment_weight: float = 0.3
     sentiment_asset_enabled: bool = True
+    reverse_trading_enabled: bool = True
+    pattern_confirmation_enabled: bool = True
+    dynamic_exit_enabled: bool = True
