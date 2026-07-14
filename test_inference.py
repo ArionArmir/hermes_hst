@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.data_collector import DataCollector
 from src.shared.features import compute_latest_features, FEATURE_COLS
+from src.training.feature_engine import TARGET_DOWN, TARGET_FLAT, TARGET_UP
 
 MODEL_PATH = "config/models/champion.pkl"
 
@@ -25,7 +26,10 @@ trained_names = list(model.get_booster().feature_names or [])
 assert trained_names == FEATURE_COLS, (
     f"Champion incompatibile:\n  addestrato su: {trained_names}\n  attese:        {FEATURE_COLS}"
 )
-print(f"✅ Champion compatibile ({len(FEATURE_COLS)} feature validate per nome)")
+assert list(model.classes_) == [TARGET_DOWN, TARGET_FLAT, TARGET_UP], (
+    f"Champion incompatibile: classi {list(model.classes_)}, attese [down, flat, up]"
+)
+print(f"✅ Champion compatibile ({len(FEATURE_COLS)} feature e 3 classi validate)")
 
 with open("config/trading_params.yaml") as f:
     symbols = yaml.safe_load(f)["symbols"]
@@ -40,7 +44,10 @@ for symbol in symbols:
     if features is None:
         print(f"⚠️ {symbol}: candele insufficienti")
         continue
-    prob = model.predict_proba(features)[0][1]
-    print(f"📊 {symbol}: P(up) = {prob:.3f}  (feature ultima candela: ok, nessun NaN)")
+    proba = model.predict_proba(features)[0]
+    print(
+        f"📊 {symbol}: P(down)={proba[TARGET_DOWN]:.3f} P(flat)={proba[TARGET_FLAT]:.3f} "
+        f"P(up)={proba[TARGET_UP]:.3f}"
+    )
 
 print("✅ Smoke test completato")

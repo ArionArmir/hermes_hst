@@ -18,7 +18,14 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.shared.features import compute_features, compute_latest_features, FEATURE_COLS, MIN_CANDLES
-from src.training.feature_engine import prepare_train_data, TARGET_HORIZON_BARS
+from src.training.feature_engine import (
+    prepare_train_data,
+    TARGET_HORIZON_BARS,
+    TARGET_THRESHOLD,
+    TARGET_DOWN,
+    TARGET_FLAT,
+    TARGET_UP,
+)
 
 
 def _synthetic_ohlcv(n: int = 1000, seed: int = 42) -> pd.DataFrame:
@@ -74,7 +81,20 @@ def test_prepare_train_data_shape_and_target():
 
     assert list(X.columns) == FEATURE_COLS
     assert not X.isna().any().any()
-    assert set(y.unique()) <= {0, 1}
+    assert set(y.unique()) <= {TARGET_DOWN, TARGET_FLAT, TARGET_UP}
     # Le ultime TARGET_HORIZON_BARS righe non hanno futuro osservabile e
-    # devono essere escluse, non etichettate 0
+    # devono essere escluse, non etichettate flat
     assert X.index.max() <= df.index.max() - TARGET_HORIZON_BARS
+
+
+def test_target_labels_match_future_returns():
+    df = _synthetic_ohlcv()
+    X, y = prepare_train_data(df)
+
+    future_return = (df['close'].shift(-TARGET_HORIZON_BARS) / df['close'] - 1).loc[y.index]
+    assert (y[future_return > TARGET_THRESHOLD] == TARGET_UP).all()
+    assert (y[future_return < -TARGET_THRESHOLD] == TARGET_DOWN).all()
+    flat_mask = (future_return >= -TARGET_THRESHOLD) & (future_return <= TARGET_THRESHOLD)
+    assert (y[flat_mask] == TARGET_FLAT).all()
+    # Con un random walk devono esistere tutte e tre le classi
+    assert set(y.unique()) == {TARGET_DOWN, TARGET_FLAT, TARGET_UP}

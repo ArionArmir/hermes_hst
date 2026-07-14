@@ -18,6 +18,12 @@ from src.shared.redis_client import RedisClient
 from src.shared.features import compute_latest_features, FEATURE_COLS
 from src.shared.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
+from src.training.feature_engine import TARGET_DOWN, TARGET_FLAT, TARGET_UP
+
+# Soglia unica e SIMMETRICA per emettere un segnale: P(up) > soglia → buy,
+# P(down) > soglia → sell. Il vecchio criterio short "P(rialzo) < 0.4" era
+# soddisfatto anche dal mercato laterale (docs/IMPROVEMENT_PLAN.md, S2).
+SIGNAL_PROB_THRESHOLD = 0.6
 
 class MLInference:
     def __init__(self):
@@ -107,8 +113,19 @@ class MLInference:
                     )
                     self.model = None
                     return
+                expected_classes = [TARGET_DOWN, TARGET_FLAT, TARGET_UP]
+                if list(model.classes_) != expected_classes:
+                    logger.error(
+                        f"❌ Modello incompatibile: classi {list(model.classes_)}, attese {expected_classes} "
+                        f"(down/flat/up). Rilanciare train_all_models.py. Nessun segnale verrà emesso."
+                    )
+                    self.model = None
+                    return
                 self.model = model
-                logger.info(f"✅ Modello caricato da {self.model_path} ({len(trained_names)} feature validate)")
+                logger.info(
+                    f"✅ Modello caricato da {self.model_path} "
+                    f"({len(trained_names)} feature e {len(expected_classes)} classi validate)"
+                )
             else:
                 logger.warning(f"⚠️ Modello non trovato: {self.model_path}")
                 self.model = None
@@ -153,6 +170,18 @@ class MLInference:
                 logger.error(f"❌ Errore connessione WebSocket: {e}")
                 await asyncio.sleep(5)
 
+    def _signal_from_proba(self, proba) -> tuple:
+        """Decisione simmetrica sulle 3 classi: un segnale (buy o sell) parte
+        solo se la probabilità della direzione supera SIGNAL_PROB_THRESHOLD.
+        La confidenza pubblicata è la probabilità della direzione scelta."""
+        p_up = float(proba[TARGET_UP])
+        p_down = float(proba[TARGET_DOWN])
+        if p_up > SIGNAL_PROB_THRESHOLD and p_up > p_down:
+            return "buy", p_up
+        if p_down > SIGNAL_PROB_THRESHOLD and p_down > p_up:
+            return "sell", p_down
+        return "hold", max(p_up, p_down)
+
     async def _inference_loop(self):
         while self.running:
             await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
@@ -173,15 +202,8 @@ class MLInference:
                     if features is None:
                         continue
 
-                    pred = self.model.predict(features)[0]
-                    prob = self.model.predict_proba(features)[0][1]
-
-                    if pred == 1 and prob > 0.6:
-                        action = "buy"
-                    elif pred == 0 and prob < 0.4:
-                        action = "sell"
-                    else:
-                        action = "hold"
+                    proba = self.model.predict_proba(features)[0]
+                    action, prob = self._signal_from_proba(proba)
 
                     # Non inviare segnali "hold" per non inquinare i log
                     if action == "hold":

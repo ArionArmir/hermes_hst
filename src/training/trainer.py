@@ -30,12 +30,15 @@ class Trainer:
             logger.error("❌ Dati insufficienti per training")
             return False
 
+        distribution = y_train.value_counts(normalize=True).sort_index()
+        logger.info(f"📊 Distribuzione classi train (down/flat/up): {distribution.round(3).to_dict()}")
+
         model = xgb.XGBClassifier(
             n_estimators=100,
             max_depth=5,
             learning_rate=0.1,
-            objective='binary:logistic',
-            eval_metric='logloss',
+            objective='multi:softprob',
+            eval_metric='mlogloss',
             random_state=42
         )
         model.fit(X_train, y_train)
@@ -49,6 +52,13 @@ class Trainer:
         if os.path.exists(self.model_path):
             champion = joblib.load(self.model_path)
             try:
+                # Un champion con classi diverse (es. il vecchio binario) non
+                # solleverebbe eccezioni su predict, ma il confronto di
+                # accuratezza sarebbe privo di senso: trattalo come incompatibile.
+                if list(champion.classes_) != list(model.classes_):
+                    raise ValueError(
+                        f"classi champion {list(champion.classes_)} != challenger {list(model.classes_)}"
+                    )
                 champion_acc = accuracy_score(y_val, champion.predict(X_val))
             except Exception as e:
                 # Il champion è stato addestrato su un set di feature diverso
