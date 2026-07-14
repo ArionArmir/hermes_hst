@@ -31,3 +31,6 @@ Thumbs.db
 .env
 *.key
 *.pem
+
+# Dashboard: PID dei processi gestiti da process_manager.py
+dashboard/pids/
