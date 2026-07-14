@@ -46,7 +46,7 @@ class ATRExitModel:
 
     def calculate_exit_levels(self, price: float, side: str) -> Tuple[float, float]:
         atr = self._calculate_atr()
-        logger.info(f"🔍 [ATR] ATR calcolato: {atr:.4f} per prezzo {price:.2f}")
+        logger.debug(f"🔍 [ATR] ATR calcolato: {atr:.4f} per prezzo {price:.2f}")
 
         if atr <= 0:
             if side == 'long':
@@ -55,7 +55,7 @@ class ATRExitModel:
             else:
                 sl = price * 1.015
                 tp = price * 0.97
-            logger.info(f"🔍 [ATR] Fallback: SL={sl:.2f}, TP={tp:.2f}")
+            logger.debug(f"🔍 [ATR] Fallback: SL={sl:.2f}, TP={tp:.2f}")
             return sl, tp
 
         if side == 'long':

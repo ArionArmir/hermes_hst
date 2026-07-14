@@ -9,6 +9,7 @@ from datetime import datetime
 from loguru import logger
 import redis
 from src.training.feature_engine import prepare_train_data
+from src.backtest import backtest_portfolio
 
 class Trainer:
     def __init__(self):
@@ -16,14 +17,21 @@ class Trainer:
         self.model_path = "config/models/champion.pkl"
         self.challenger_path = "config/models/challenger.pkl"
 
-    def train(self, X_train: pd.DataFrame, X_val: pd.DataFrame, y_train: pd.Series, y_val: pd.Series):
+    def train(self, X_train: pd.DataFrame, X_val: pd.DataFrame, y_train: pd.Series, y_val: pd.Series,
+              val_candles: dict = None):
         """Addestra un nuovo modello XGBoost su train/validation già pronti e già
         divisi (Approccio A: possono provenire dalla concatenazione di più
         simboli). Lo split va fatto PRIMA per singolo simbolo (rispettando
         l'ordine temporale di ciascuno) e poi concatenato separatamente per
         train e per validation — uno split unico sul dataset già concatenato
         con shuffle=False finirebbe per validare quasi solo sull'ultimo
-        simbolo appeso, non su un campione rappresentativo di tutti."""
+        simbolo appeso, non su un campione rappresentativo di tutti.
+
+        val_candles: {symbol: OHLCV del periodo di validation} — se presente,
+        champion e challenger si confrontano sul PnL NETTO del backtest
+        (fee e slippage inclusi), non sull'accuratezza: l'accuratezza premia
+        chi indovina le candele, il backtest chi fa soldi con la strategia
+        reale (docs/IMPROVEMENT_PLAN.md, M3)."""
         logger.info(f"🧠 Avvio training su {len(X_train)} righe (validation: {len(X_val)})...")
 
         if len(X_train) < 100:
@@ -59,7 +67,7 @@ class Trainer:
                     raise ValueError(
                         f"classi champion {list(champion.classes_)} != challenger {list(model.classes_)}"
                     )
-                champion_acc = accuracy_score(y_val, champion.predict(X_val))
+                promote, verdict = self._compare_models(model, champion, X_val, y_val, acc, val_candles)
             except Exception as e:
                 # Il champion è stato addestrato su un set di feature diverso
                 # (nomi/ordine non compatibili con FEATURE_COLS attuale): non è
@@ -69,16 +77,38 @@ class Trainer:
                 self._swap_model()
                 logger.info("🏆 Challenger promosso per incompatibilità del champion")
                 return True
-            if acc > champion_acc:
+            if promote:
                 self._swap_model()
-                logger.info(f"🏆 Nuovo champion! {acc:.2%} > {champion_acc:.2%}")
+                logger.info(f"🏆 Nuovo champion! ({verdict})")
             else:
-                logger.info(f"ℹ️ Challenger non supera champion ({acc:.2%} < {champion_acc:.2%})")
+                logger.info(f"ℹ️ Challenger non supera champion ({verdict})")
         else:
             self._swap_model()
             logger.info("🏆 Primo modello champion")
 
         return True
+
+    def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles):
+        """(promuovere?, motivazione). Preferisce il backtest; ripiega
+        sull'accuratezza solo se le candele di validation non sono
+        disponibili o non producono risultati."""
+        if val_candles:
+            challenger_bt = backtest_portfolio(challenger, val_candles).get("TOTAL")
+            champion_bt = backtest_portfolio(champion, val_candles).get("TOTAL")
+            if challenger_bt is not None and champion_bt is not None:
+                logger.info(
+                    f"🔬 Backtest validation — challenger: PnL netto {challenger_bt.net_pnl:.2f} USDT "
+                    f"({challenger_bt.n_trades} trade, hit {challenger_bt.hit_rate:.0%}, "
+                    f"maxDD {challenger_bt.max_drawdown_pct:.1%}) | champion: {champion_bt.net_pnl:.2f} USDT "
+                    f"({champion_bt.n_trades} trade, hit {champion_bt.hit_rate:.0%}, "
+                    f"maxDD {champion_bt.max_drawdown_pct:.1%})"
+                )
+                verdict = (f"PnL netto backtest: {challenger_bt.net_pnl:.2f} vs "
+                           f"{champion_bt.net_pnl:.2f} USDT")
+                return challenger_bt.net_pnl > champion_bt.net_pnl, verdict
+            logger.warning("⚠️ Backtest senza risultati, ripiego sul confronto di accuratezza")
+        champion_acc = accuracy_score(y_val, champion.predict(X_val))
+        return challenger_acc > champion_acc, f"accuratezza {challenger_acc:.2%} vs {champion_acc:.2%}"
 
     def _swap_model(self):
         """Swap atomico su Redis"""

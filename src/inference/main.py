@@ -19,11 +19,7 @@ from src.shared.features import compute_latest_features, FEATURE_COLS
 from src.shared.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
 from src.training.feature_engine import TARGET_DOWN, TARGET_FLAT, TARGET_UP
-
-# Soglia unica e SIMMETRICA per emettere un segnale: P(up) > soglia → buy,
-# P(down) > soglia → sell. Il vecchio criterio short "P(rialzo) < 0.4" era
-# soddisfatto anche dal mercato laterale (docs/IMPROVEMENT_PLAN.md, S2).
-SIGNAL_PROB_THRESHOLD = 0.6
+from src.shared.signal_policy import signal_from_proba, SIGNAL_PROB_THRESHOLD
 
 class MLInference:
     def __init__(self):
@@ -171,16 +167,10 @@ class MLInference:
                 await asyncio.sleep(5)
 
     def _signal_from_proba(self, proba) -> tuple:
-        """Decisione simmetrica sulle 3 classi: un segnale (buy o sell) parte
-        solo se la probabilità della direzione supera SIGNAL_PROB_THRESHOLD.
-        La confidenza pubblicata è la probabilità della direzione scelta."""
-        p_up = float(proba[TARGET_UP])
-        p_down = float(proba[TARGET_DOWN])
-        if p_up > SIGNAL_PROB_THRESHOLD and p_up > p_down:
-            return "buy", p_up
-        if p_down > SIGNAL_PROB_THRESHOLD and p_down > p_up:
-            return "sell", p_down
-        return "hold", max(p_up, p_down)
+        """Delega alla policy condivisa con il backtester
+        (src/shared/signal_policy.py): live e simulazione devono decidere
+        con la stessa identica regola."""
+        return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP])
 
     async def _inference_loop(self):
         while self.running:

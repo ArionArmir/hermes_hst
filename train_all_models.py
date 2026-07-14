@@ -19,6 +19,7 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.data_collector import DataCollector
+from src.shared.features import MIN_CANDLES
 from src.training.feature_engine import prepare_train_data
 from src.training.trainer import Trainer
 
@@ -66,6 +67,7 @@ def main():
     collector = DataCollector()
     train_parts_X, val_parts_X, train_parts_y, val_parts_y = [], [], [], []
     per_symbol_iqr = {}
+    val_candles = {}
 
     for symbol in symbols:
         symbol_clean = symbol.replace("/", "").upper()
@@ -98,6 +100,12 @@ def main():
         train_parts_y.append(y_train)
         val_parts_y.append(y_val)
 
+        # Candele OHLCV del periodo di validation (stesso ultimo 20%, più
+        # warmup per le feature): servono al trainer per confrontare
+        # champion e challenger sul PnL netto del backtest.
+        n_val = int(len(df) * 0.2)
+        val_candles[symbol_clean] = df.iloc[-(n_val + MIN_CANDLES):]
+
     if not train_parts_X:
         logger.error("❌ Nessun dato disponibile per nessun simbolo, training annullato")
         return
@@ -113,7 +121,7 @@ def main():
     check_scale_invariance(per_symbol_iqr)
 
     trainer = Trainer()
-    trainer.train(X_train, X_val, y_train, y_val)
+    trainer.train(X_train, X_val, y_train, y_val, val_candles=val_candles)
 
 
 if __name__ == "__main__":
