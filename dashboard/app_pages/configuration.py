@@ -42,6 +42,9 @@ with st.form("trading_config_form"):
         max_exposure = st.number_input(
             "Esposizione massima", min_value=0.0, max_value=1.0, value=defaults.max_exposure, format="%.2f"
         )
+        max_holding_minutes = st.number_input(
+            "Durata massima posizione (minuti)", min_value=1, value=defaults.max_holding_minutes, step=5
+        )
     with col2:
         min_volatility_threshold = st.number_input(
             "Soglia volatilità minima", min_value=0.0, value=defaults.min_volatility_threshold, format="%.4f"
@@ -86,6 +89,7 @@ if submitted:
         max_position_size_usdt=max_position_size_usdt,
         trailing_stop_pct=trailing_stop_pct,
         max_exposure=max_exposure,
+        max_holding_minutes=int(max_holding_minutes),
         min_volatility_threshold=min_volatility_threshold,
         max_volatility_threshold=max_volatility_threshold,
         volatility_adjustment=volatility_adjustment,
