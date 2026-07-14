@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""
+Watchdog degli heartbeat: legge da Redis i segni di vita dei processi
+(heartbeat_* e last_tick_*) e notifica via Telegram/email quando qualcosa è
+fermo oltre soglia. Pensato per girare da cron ogni minuto:
+
+    * * * * * cd /home/alexbi/hermes_hft && venv/bin/python watchdog.py >> logs/watchdog.log 2>&1
+
+Anti-spam: lo stato "già allertato" vive nel set Redis `watchdog_alerted` —
+un problema notifica UNA volta sola, poi tace finché non rientra (e al
+rientro manda una notifica di recovery). Se Redis stesso è giù, il dedup usa
+un file marker locale (logs/.watchdog_redis_down).
+
+Con --restart prova anche a riavviare i processi con heartbeat fermo
+(stop+start via dashboard/utils/process_manager, lo stesso della dashboard).
+Di default NON riavvia nulla: un riavvio automatico durante uno stop
+intenzionale farebbe più danni di un alert in più.
+"""
+import argparse
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
+
+# Soglie in secondi. Heartbeat: engine/inference li scrivono ogni ~5s,
+# sentiment ogni 15s. Tick: su Binance Futures BTC/ETH scambiano di continuo,
+# nessun tick per 3 minuti = WebSocket morto, non mercato fermo.
+CHECKS = {
+    "engine": {"key": "heartbeat_engine", "stale_after": 120},
+    "inference": {"key": "heartbeat_inference", "stale_after": 120},
+    "sentiment": {"key": "heartbeat_sentiment", "stale_after": 120},
+    "tick engine": {"key": "last_tick_engine", "stale_after": 180},
+    "tick inference": {"key": "last_tick_inference", "stale_after": 180},
+}
+RESTARTABLE = ("engine", "inference", "sentiment")
+ALERT_STATE_KEY = "watchdog_alerted"
+REDIS_DOWN_MARKER = REPO_ROOT / "logs" / ".watchdog_redis_down"
+
+
+def load_env(path: Path = REPO_ROOT / ".env"):
+    """Cron non passa da start.sh: carichiamo .env a mano (serve al Notifier
+    per TELEGRAM_TOKEN/CHAT_ID). setdefault: l'ambiente esistente vince."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def evaluate_checks(redis_values: Dict[str, Optional[str]],
+                    now: datetime) -> Dict[str, Optional[str]]:
+    """{nome check: descrizione problema o None se sano}."""
+    problems: Dict[str, Optional[str]] = {}
+    for name, spec in CHECKS.items():
+        raw = redis_values.get(spec["key"])
+        if not raw:
+            problems[name] = "nessun heartbeat registrato su Redis"
+            continue
+        try:
+            ts = datetime.fromisoformat(raw)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except ValueError:
+            problems[name] = f"timestamp illeggibile: {raw!r}"
+            continue
+        age = (now - ts).total_seconds()
+        if age > spec["stale_after"]:
+            problems[name] = f"fermo da {age:.0f}s (soglia {spec['stale_after']}s)"
+        else:
+            problems[name] = None
+    return problems
+
+
+def split_transitions(previously_alerted: Set[str],
+                      problems: Dict[str, Optional[str]]) -> Tuple[Dict[str, str], List[str]]:
+    """(nuovi problemi da notificare, check rientrati da notificare come
+    recovery). I problemi già notificati in un giro precedente non tornano."""
+    new_alerts = {name: desc for name, desc in problems.items()
+                  if desc and name not in previously_alerted}
+    recovered = sorted(name for name in previously_alerted if problems.get(name) is None)
+    return new_alerts, recovered
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--restart", action="store_true",
+                        help="riavvia i processi con heartbeat fermo (default: solo notifica)")
+    args = parser.parse_args()
+
+    load_env()
+    import redis
+    from src.shared.notifier import Notifier
+    notifier = Notifier()  # istanziato DOPO load_env, l'istanza globale del modulo leggerebbe env vuote
+
+    client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    try:
+        client.ping()
+    except redis.RedisError as e:
+        print(f"[watchdog] Redis irraggiungibile: {e}")
+        if not REDIS_DOWN_MARKER.exists():
+            REDIS_DOWN_MARKER.parent.mkdir(exist_ok=True)
+            REDIS_DOWN_MARKER.touch()
+            notifier.notify_error("Watchdog: Redis irraggiungibile — l'intero sistema è probabilmente fermo")
+        return 2
+    if REDIS_DOWN_MARKER.exists():
+        REDIS_DOWN_MARKER.unlink()
+        notifier.send_telegram("✅ Watchdog: Redis di nuovo raggiungibile")
+
+    now = datetime.now(timezone.utc)
+    keys = [spec["key"] for spec in CHECKS.values()]
+    values = dict(zip(keys, client.mget(keys)))
+    problems = evaluate_checks(values, now)
+    previously_alerted = set(client.smembers(ALERT_STATE_KEY))
+    new_alerts, recovered = split_transitions(previously_alerted, problems)
+
+    if new_alerts:
+        lines = "\n".join(f"• {name}: {desc}" for name, desc in sorted(new_alerts.items()))
+        print(f"[watchdog] PROBLEMI:\n{lines}")
+        notifier.notify_error(f"Watchdog Hermes:\n{lines}")
+        client.sadd(ALERT_STATE_KEY, *new_alerts.keys())
+
+    if recovered:
+        names = ", ".join(recovered)
+        print(f"[watchdog] rientrati: {names}")
+        notifier.send_telegram(f"✅ Watchdog Hermes: rientrato — {names}")
+        client.srem(ALERT_STATE_KEY, *recovered)
+
+    if args.restart:
+        stale_services = [name for name, desc in problems.items()
+                          if desc and name in RESTARTABLE]
+        if stale_services:
+            sys.path.insert(0, str(REPO_ROOT / "dashboard"))
+            from utils import process_manager
+            for service in stale_services:
+                process_manager.stop(service)
+                ok, msg = process_manager.start(service)
+                print(f"[watchdog] riavvio {service}: {msg}")
+                notifier.send_telegram(f"🔄 Watchdog: riavvio {service} → {msg}")
+
+    active_problems = {name: desc for name, desc in problems.items() if desc}
+    if not active_problems:
+        print(f"[watchdog] {now.isoformat()} tutti i controlli OK")
+    return 1 if active_problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
