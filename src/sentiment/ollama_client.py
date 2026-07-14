@@ -33,39 +33,70 @@ class OllamaSentiment:
             await self.redis.set('heartbeat_sentiment', datetime.now(timezone.utc).isoformat())
             await asyncio.sleep(15)
 
-    async def _analyze_sentiment(self, news_by_asset: dict) -> dict:
-        prompt_template = """
-Sei un analista finanziario esperto in criptovalute. 
+    async def _get_assets(self) -> list:
+        """Asset base dai simboli configurati (BTCUSDT → BTC): Redis prima,
+        YAML come fallback. Riletto a ogni ciclo (5 min): i cambi di config
+        arrivano senza bisogno di un listener dedicato."""
+        symbols = None
+        try:
+            config = await self.redis.get_json('trading_config')
+            if config:
+                symbols = config.get('symbols')
+        except Exception as e:
+            logger.warning(f"⚠️ Config non leggibile da Redis: {e}")
+        if not symbols:
+            try:
+                import yaml
+                with open('config/trading_params.yaml') as f:
+                    symbols = yaml.safe_load(f).get('symbols')
+            except Exception:
+                pass
+        if not symbols:
+            symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        return [s.upper().replace("USDT", "") for s in symbols]
+
+    @staticmethod
+    def _normalize_scores(raw: dict, assets: list) -> dict:
+        """Punteggi float in [-1, 1] per ogni asset richiesto (0 se mancante
+        o non numerico); aggregate ricalcolato come media se assente o fuori
+        scala. Mai valori inventati: il fallback è sempre 0 (neutro)."""
+        scores = {}
+        for asset in assets:
+            try:
+                scores[asset] = max(-1.0, min(1.0, float(raw.get(asset, 0.0))))
+            except (TypeError, ValueError):
+                scores[asset] = 0.0
+        try:
+            aggregate = float(raw.get('aggregate'))
+            if not -1.0 <= aggregate <= 1.0:
+                raise ValueError
+        except (TypeError, ValueError):
+            aggregate = sum(scores.values()) / len(scores) if scores else 0.0
+        scores['aggregate'] = aggregate
+        return scores
+
+    async def _analyze_sentiment(self, news_by_asset: dict, assets: list) -> dict:
+        sections = ["Notizie Generali:\n" + ("\n".join(news_by_asset.get("general", [])) or "Nessuna notizia generale.")]
+        for asset in assets:
+            titles = "\n".join(news_by_asset.get(asset, [])) or f"Nessuna notizia su {asset}."
+            sections.append(f"Notizie su {asset}:\n{titles}")
+        json_fields = ",\n".join(f'    "{asset}": (punteggio da -1 a 1)' for asset in assets)
+
+        prompt = f"""
+Sei un analista finanziario esperto in criptovalute.
 Analizza le seguenti notizie e assegna un punteggio di sentiment da -1 (molto negativo) a +1 (molto positivo) per ciascun asset.
+Se per un asset non ci sono notizie rilevanti, assegna 0.
 
-Notizie Generali:
-{general}
-
-Notizie su Bitcoin (BTC):
-{btc}
-
-Notizie su Ethereum (ETH):
-{eth}
-
-Notizie su Solana (SOL):
-{sol}
+{chr(10).join(sections)}
 
 Restituisci SOLO un JSON valido con la seguente struttura:
 {{
-    "BTC": (punteggio da -1 a 1),
-    "ETH": (punteggio da -1 a 1),
-    "SOL": (punteggio da -1 a 1),
-    "aggregate": (media ponderata dei tre punteggi)
+{json_fields},
+    "aggregate": (media dei punteggi)
 }}
 Non aggiungere altro testo, solo il JSON.
 """
-        general = "\n".join(news_by_asset.get("general", [])) or "Nessuna notizia generale."
-        btc = "\n".join(news_by_asset.get("BTC", [])) or "Nessuna notizia su Bitcoin."
-        eth = "\n".join(news_by_asset.get("ETH", [])) or "Nessuna notizia su Ethereum."
-        sol = "\n".join(news_by_asset.get("SOL", [])) or "Nessuna notizia su Solana."
-
-        prompt = prompt_template.format(general=general, btc=btc, eth=eth, sol=sol)
-
+        neutral = self._normalize_scores({}, assets)
         async with aiohttp.ClientSession() as session:
             try:
                 payload = {
@@ -78,50 +109,38 @@ Non aggiungere altro testo, solo il JSON.
                     data = await resp.json()
                     response = data.get('response', '{}').strip()
                     try:
-                        result = json.loads(response)
-                    except:
-                        import re
-                        numbers = re.findall(r'-?\d+\.?\d*', response)
-                        if len(numbers) >= 3:
-                            result = {
-                                "BTC": float(numbers[0]),
-                                "ETH": float(numbers[1]),
-                                "SOL": float(numbers[2]),
-                                "aggregate": float(numbers[3]) if len(numbers) > 3 else sum(map(float, numbers[:3]))/3
-                            }
-                        else:
-                            result = {"BTC": 0.0, "ETH": 0.0, "SOL": 0.0, "aggregate": 0.0}
-                    return result
+                        return self._normalize_scores(json.loads(response), assets)
+                    except json.JSONDecodeError:
+                        logger.warning(f"⚠️ Risposta Ollama non-JSON, sentiment neutro: {response[:200]!r}")
+                        return neutral
             except Exception as e:
                 logger.error(f"❌ Errore chiamata Ollama: {e}")
-                return {"BTC": 0.0, "ETH": 0.0, "SOL": 0.0, "aggregate": 0.0}
+                return neutral
 
     async def _sentiment_loop(self):
         while self.running:
             try:
-                logger.info("📰 Recupero news da fonti RSS...")
-                news_by_asset = await self.news_fetcher.fetch_news_for_all(limit_per_symbol=3)
-                logger.debug(f"📰 News BTC: {news_by_asset.get('BTC', [])}")
-                logger.debug(f"📰 News ETH: {news_by_asset.get('ETH', [])}")
-                logger.debug(f"📰 News SOL: {news_by_asset.get('SOL', [])}")
+                assets = await self._get_assets()
+                logger.info(f"📰 Recupero news da fonti RSS per {', '.join(assets)}...")
+                news_by_asset = await self.news_fetcher.fetch_news_for_all(assets, limit_per_symbol=3)
+                for asset in assets:
+                    logger.debug(f"📰 News {asset}: {news_by_asset.get(asset, [])}")
 
-                scores = await self._analyze_sentiment(news_by_asset)
-                logger.info(f"🧠 Sentiment calcolato: BTC={scores.get('BTC', 0):.2f}, ETH={scores.get('ETH', 0):.2f}, SOL={scores.get('SOL', 0):.2f}, aggregate={scores.get('aggregate', 0):.2f}")
-                logger.info(f"   📊 Sentiment singoli: BTC={scores.get('BTC', 0):.2f}, ETH={scores.get('ETH', 0):.2f}, SOL={scores.get('SOL', 0):.2f}")
+                scores = await self._analyze_sentiment(news_by_asset, assets)
+                summary = ", ".join(f"{a}={scores.get(a, 0):+.2f}" for a in assets)
+                logger.info(f"🧠 Sentiment calcolato: {summary} | aggregate={scores.get('aggregate', 0):+.2f}")
 
                 aggregate_score = scores.get('aggregate', 0.0)
                 self._save_sentiment(aggregate_score)
                 await self.redis.set('sentiment_score', str(aggregate_score))
                 await self.redis.publish('sentiment_update', str(aggregate_score))
-                logger.info(f"✅ Sentiment aggregato pubblicato su Redis: {aggregate_score:.2f}")
 
-                # Pubblica sentiment per asset
+                # Pubblica il sentiment per asset (l'engine mappa asset→simbolo)
+                # e persiste le chiavi per-asset lette dalla dashboard
                 await self.redis.publish("sentiment_asset", json.dumps(scores))
-                logger.info(f"✅ Sentiment per asset pubblicato su Redis")
-
-                await self.redis.set('sentiment_btc', str(scores.get('BTC', 0)))
-                await self.redis.set('sentiment_eth', str(scores.get('ETH', 0)))
-                await self.redis.set('sentiment_sol', str(scores.get('SOL', 0)))
+                for asset in assets:
+                    await self.redis.set(f'sentiment_{asset.lower()}', str(scores.get(asset, 0.0)))
+                logger.info("✅ Sentiment pubblicato su Redis (aggregato + per asset)")
 
             except Exception as e:
                 logger.error(f"❌ Errore sentiment loop: {e}")

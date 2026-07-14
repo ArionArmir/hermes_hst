@@ -582,13 +582,7 @@ class TradingEngine:
                             logger.error(f"❌ Errore parsing sentiment: {e}")
                     elif channel == 'sentiment_asset':
                         try:
-                            asset_data = json.loads(data)
-                            self.sentiment_by_asset = {
-                                'BTCUSDT': asset_data.get('BTC', 0.0),
-                                'ETHUSDT': asset_data.get('ETH', 0.0),
-                                'SOLUSDT': asset_data.get('SOL', 0.0)
-                            }
-                            logger.info(f"🧠 Sentiment per asset: BTC={self.sentiment_by_asset.get('BTCUSDT', 0):.2f}, ETH={self.sentiment_by_asset.get('ETHUSDT', 0):.2f}, SOL={self.sentiment_by_asset.get('SOLUSDT', 0):.2f}")
+                            self._on_sentiment_asset(data)
                         except Exception as e:
                             logger.error(f"❌ Errore parsing sentiment asset: {e}")
                     elif channel == 'config_updated':
@@ -612,16 +606,50 @@ class TradingEngine:
                 await asyncio.sleep(5)
                 asyncio.create_task(self._redis_listener())
 
+    def _on_sentiment_asset(self, payload: str):
+        """Mappa dinamica asset→simbolo ({'BTC': 0.2, …} → {'BTCUSDT': 0.2}):
+        qualunque asset pubblicato dal processo sentiment viene usato, niente
+        più lista hardcoded BTC/ETH/SOL (tutte le coppie del progetto quotano
+        in USDT)."""
+        asset_data = json.loads(payload)
+        self.sentiment_by_asset = {
+            f"{asset.upper()}USDT": float(score)
+            for asset, score in asset_data.items()
+            if asset.lower() != 'aggregate' and isinstance(score, (int, float))
+        }
+        if self.sentiment_by_asset:
+            summary = ", ".join(f"{sym[:-4]}={score:+.2f}" for sym, score in self.sentiment_by_asset.items())
+            logger.info(f"🧠 Sentiment per asset: {summary}")
+
     async def _on_signal(self, signal: Signal):
         logger.info(f"📊 Segnale ricevuto: {signal.action} per {signal.symbol} (conf: {signal.confidence:.2f})")
 
         if signal.source == 'ml':
-            asset_sentiment = self.sentiment_by_asset.get(signal.symbol, self.sentiment_score)
-            weighted_confidence = (1 - self.sentiment_weight) * signal.confidence + self.sentiment_weight * abs(asset_sentiment)
-
-            if asset_sentiment < -0.5 and signal.action == 'buy':
-                logger.warning(f"⚠️ Sentiment negativo forte per {signal.symbol} → segnale BUY filtrato")
+            if signal.action == 'close':
+                await self._close_position(signal.symbol, reason="ML_SIGNAL")
                 return
+
+            asset_sentiment = self.sentiment_by_asset.get(signal.symbol, self.sentiment_score)
+            direction = 1.0 if signal.action == 'buy' else -1.0
+            directional_sentiment = direction * asset_sentiment  # > 0 = favorevole al trade
+
+            # Veto SIMMETRICO: un sentiment fortemente contrario blocca sia i
+            # buy (sentiment molto negativo) sia i sell (molto positivo) — il
+            # vecchio filtro copriva solo il lato buy.
+            if directional_sentiment < -0.5:
+                logger.warning(
+                    f"⚠️ Sentiment fortemente contrario ({asset_sentiment:+.2f}) per {signal.symbol} "
+                    f"→ segnale {signal.action.upper()} filtrato"
+                )
+                return
+
+            # Il sentiment contribuisce alla confidenza solo se FAVOREVOLE
+            # alla direzione: il vecchio abs() aumentava la confidenza anche
+            # con sentiment opposto al trade (docs/IMPROVEMENT_PLAN.md, S4).
+            weighted_confidence = (
+                (1 - self.sentiment_weight) * signal.confidence
+                + self.sentiment_weight * max(0.0, directional_sentiment)
+            )
 
             if weighted_confidence < self.ml_confidence_threshold:
                 logger.info(f"ℹ️ Confidenza bassa ({weighted_confidence:.2f}) → segnale ignorato")
@@ -673,12 +701,8 @@ class TradingEngine:
                     await self._close_position(signal.symbol, reason="REVERSE_SIGNAL")
                     await asyncio.sleep(0.5)
 
-            if signal.action == 'buy':
+            if signal.action in ('buy', 'sell'):
                 await self._open_position(signal)
-            elif signal.action == 'sell':
-                await self._open_position(signal)
-            elif signal.action == 'close':
-                await self._close_position(signal.symbol, reason="ML_SIGNAL")
 
     def stop(self):
         self.running = False
