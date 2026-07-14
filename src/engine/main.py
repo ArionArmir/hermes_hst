@@ -84,6 +84,7 @@ class TradingEngine:
         self.max_position_usdt = 200.0
         self.trailing_stop_pct = 0.015
         self.max_exposure = 0.5
+        self.taker_fee_pct = 0.0005
         self.ml_confidence_threshold = 0.55
         self.sentiment_weight = 0.3
 
@@ -116,6 +117,7 @@ class TradingEngine:
         await self._load_config_from_redis()
         await self._bootstrap_candle_models()
         await self._load_positions_from_redis()
+        await self._load_capital_from_redis()
 
         self.ws_task = asyncio.create_task(self._websocket_loop())
         asyncio.create_task(self._redis_listener())
@@ -158,6 +160,7 @@ class TradingEngine:
         self.max_position_usdt = config.max_position_size_usdt
         self.trailing_stop_pct = config.trailing_stop_pct
         self.max_exposure = config.max_exposure
+        self.taker_fee_pct = config.taker_fee_pct
         self.symbols = [s.lower() for s in config.symbols]
         for symbol in self.symbols:
             symbol_upper = symbol.upper()
@@ -206,6 +209,29 @@ class TradingEngine:
                     logger.info(f"📊 Posizione caricata: {symbol}")
                 except Exception as e:
                     logger.error(f"❌ Errore caricamento posizione {symbol}: {e}")
+
+    async def _load_capital_from_redis(self):
+        """Il capitale paper sopravvive ai riavvii: senza persistenza ogni
+        restart lo riporterebbe a 1000 falsando l'equity e il cap di
+        esposizione."""
+        value = await self.redis.get('capital')
+        if value:
+            try:
+                self.capital = float(value)
+                logger.info(f"💰 Capitale caricato da Redis: {self.capital:.2f} USDT")
+            except ValueError:
+                logger.warning(f"⚠️ Valore capitale non valido su Redis, resto a {self.capital:.2f}: {value!r}")
+
+    def _margin_in_use(self) -> float:
+        """Margine impegnato dalle posizioni aperte (nozionale/leva), al
+        prezzo corrente quando disponibile."""
+        total = 0.0
+        for sym, pos in self.positions.items():
+            if not pos.is_open:
+                continue
+            price = self.latest_prices.get(sym, pos.entry_price)
+            total += (pos.quantity * price) / max(pos.leverage, 1)
+        return total
 
     async def _save_positions_to_redis(self):
         positions_dict = {}
@@ -394,6 +420,20 @@ class TradingEngine:
             logger.warning("⚠️ Capitale insufficiente per aprire posizione")
             return
 
+        # Cap a livello PORTAFOGLIO: il sizing per-simbolo da solo permetteva
+        # di impegnare più del capitale sommando simboli correlati
+        # (docs/IMPROVEMENT_PLAN.md, S5).
+        margin_required = position_size / max(leverage, 1)
+        margin_in_use = self._margin_in_use()
+        margin_cap = self.capital * self.max_exposure
+        if margin_in_use + margin_required > margin_cap:
+            logger.warning(
+                f"⛔ Cap esposizione portafoglio: margine in uso {margin_in_use:.2f} + richiesto "
+                f"{margin_required:.2f} > {margin_cap:.2f} USDT ({self.max_exposure:.0%} di {self.capital:.2f}) "
+                f"→ {symbol} non aperto"
+            )
+            return
+
         quantity = position_size / price
         quantity = round(quantity, 3)
 
@@ -442,18 +482,30 @@ class TradingEngine:
                     logger.warning(f"⚠️ Prezzo non disponibile per chiusura {symbol}, uso entry")
                     price = position.entry_price
 
-        pnl = (price - position.entry_price) * position.quantity
+        pnl_gross = (price - position.entry_price) * position.quantity
         if position.side == 'short':
-            pnl = -pnl
+            pnl_gross = -pnl_gross
+
+        # Fee taker su entrambi i lati: senza, il paper trading sovrastima il
+        # PnL proprio dove la strategia rischia di più (turnover del reverse).
+        fees = (position.entry_price + price) * position.quantity * self.taker_fee_pct
+        pnl = pnl_gross - fees
 
         position.is_open = False
+        self.capital += pnl
         await self._save_positions_to_redis()
+        await self.redis.set('capital', str(self.capital))
 
-        logger.info(f"📉 Posizione CHIUSA: {symbol} | PnL: {pnl:.2f} USDT | Motivo: {reason}")
+        logger.info(
+            f"📉 Posizione CHIUSA: {symbol} | PnL: {pnl:.2f} USDT "
+            f"(lordo {pnl_gross:.2f}, fee {fees:.2f}) | Capitale: {self.capital:.2f} | Motivo: {reason}"
+        )
         notifier.notify_position_closed(symbol, position.side, position.entry_price, price, pnl, reason)
-        self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason)
+        self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason,
+                                 pnl_gross=pnl_gross, fees=fees)
 
-    def _save_trade_to_file(self, symbol: str, side: str, entry: float, exit_price: float, pnl: float, reason: str):
+    def _save_trade_to_file(self, symbol: str, side: str, entry: float, exit_price: float, pnl: float, reason: str,
+                            pnl_gross: float = None, fees: float = 0.0):
         import pandas as pd
         import os
         filename = "data/trades_history.csv"
@@ -464,7 +516,10 @@ class TradingEngine:
             'entry': entry,
             'exit': exit_price,
             'pnl': pnl,
-            'reason': reason
+            'reason': reason,
+            'pnl_gross': pnl_gross if pnl_gross is not None else pnl,
+            'fees': fees,
+            'capital_after': self.capital
         }])
         os.makedirs("data", exist_ok=True)
         if os.path.exists(filename) and os.path.getsize(filename) > 0:

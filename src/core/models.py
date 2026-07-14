@@ -38,7 +38,12 @@ class Config(BaseModel):
     take_profit_pct: float = 0.02
     max_position_size_usdt: float = 200.0
     trailing_stop_pct: float = 0.005
+    # Frazione massima del capitale impegnabile come margine, sommando TUTTE
+    # le posizioni aperte: l'engine rifiuta le aperture oltre questo cap.
     max_exposure: float = 0.5
+    # Fee taker Binance Futures (0,05% per lato), simulate a ogni chiusura
+    # per un PnL paper realistico.
+    taker_fee_pct: float = 0.0005
     min_volatility_threshold: float = 0.001
     max_volatility_threshold: float = 0.02
     volatility_adjustment: bool = True

@@ -3,7 +3,10 @@ stop_loss_pct: 0.05
 take_profit_pct: 0.04
 max_position_size_usdt: 50.0
 trailing_stop_pct: 0.015
+# Frazione max del capitale impegnabile come margine (tutte le posizioni)
 max_exposure: 0.5
+# Fee taker simulate per lato (0.05% Binance Futures)
+taker_fee_pct: 0.0005
 min_volatility_threshold: 0.001
 max_volatility_threshold: 0.02
 volatility_adjustment: true
