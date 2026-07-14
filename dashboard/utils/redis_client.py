@@ -1,0 +1,73 @@
+"""
+Client Redis sincrono per la dashboard (redis-py, non l'async src/shared/redis_client.py).
+Evita di dover gestire un event loop dentro Streamlit.
+"""
+import json
+from typing import Optional
+
+import redis
+import streamlit as st
+
+HEARTBEAT_SERVICES = ("engine", "inference", "sentiment")
+
+
+@st.cache_resource
+def get_client() -> redis.Redis:
+    return redis.Redis(host="localhost", port=6379, decode_responses=True)
+
+
+def get_json(key: str) -> Optional[dict]:
+    raw = get_client().get(key)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def get_positions() -> dict:
+    return get_json("positions") or {}
+
+
+def get_latest_price(symbol: str) -> Optional[float]:
+    raw = get_client().get(f"latest_price_{symbol}")
+    return float(raw) if raw else None
+
+
+def get_heartbeat(service: str) -> Optional[str]:
+    return get_client().get(f"heartbeat_{service}")
+
+
+def get_trading_config() -> Optional[dict]:
+    return get_json("trading_config")
+
+
+def save_trading_config(config_dict: dict):
+    client = get_client()
+    client.set("trading_config", json.dumps(config_dict))
+    client.publish("config_updated", "1")
+
+
+def publish_engine_command(action: str, reason: str = ""):
+    payload = {"action": action}
+    if reason:
+        payload["reason"] = reason
+    get_client().publish("engine_commands", json.dumps(payload))
+
+
+def get_sentiment_score() -> Optional[float]:
+    raw = get_client().get("sentiment_score")
+    return float(raw) if raw else None
+
+
+def get_sentiment_by_asset() -> dict:
+    """sentiment_asset è solo pubblicato via pubsub: gli unici valori persistiti
+    sono le chiavi sentiment_btc/eth/sol scritte da src/sentiment/ollama_client.py."""
+    client = get_client()
+    result = {}
+    for asset in ("btc", "eth", "sol"):
+        raw = client.get(f"sentiment_{asset}")
+        if raw is not None:
+            result[asset.upper()] = float(raw)
+    return result
