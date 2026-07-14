@@ -27,7 +27,10 @@ with st.container(horizontal=True):
 
 service = service or SERVICES[0]
 prefix = LOG_PREFIX[service]
-candidates = sorted(LOG_DIR.glob(f"{prefix}_*.log"))
+# Pattern con data esplicita (YYYY-MM-DD): esclude file non ruotati per data
+# come trading_debug.log, che altrimenti finirebbe in coda all'ordinamento
+# alfabetico (t...d > t...2) e verrebbe scambiato per il più recente.
+candidates = sorted(LOG_DIR.glob(f"{prefix}_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].log"))
 
 if not candidates:
     st.info("Nessun file di log trovato per questo servizio")
