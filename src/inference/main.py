@@ -14,7 +14,7 @@ import numpy as np
 import websockets
 from loguru import logger
 from datetime import datetime, timezone
-from src.core.models import Signal
+from src.core.models import Signal, Config
 from src.shared.redis_client import RedisClient
 from src.inference.feature_engine import FeatureEngine
 from src.shared.ohlc_aggregator import OHLCAggregator
@@ -31,17 +31,62 @@ class MLInference:
         self.feature_engines = {symbol: FeatureEngine(window=100) for symbol in self.symbols}
         self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
+        self.config = None
 
     async def initialize(self):
         logger.info("🧠 Avvio ML Inference con dati reali...")
         self.redis = RedisClient(host="localhost")
         await self.redis.connect()
+        await self._load_config_from_redis()
         self._load_model()
 
         asyncio.create_task(self._websocket_loop())
         asyncio.create_task(self._inference_loop())
+        asyncio.create_task(self._redis_listener())
 
         logger.info("✅ ML Inference avviato (con WebSocket Binance)")
+
+    async def _load_config_from_redis(self):
+        try:
+            config_data = await self.redis.get_json('trading_config')
+            if config_data:
+                self.config = Config(**config_data)
+                self._apply_config(self.config)
+                logger.info("✅ Configurazione caricata da Redis")
+            else:
+                import yaml
+                try:
+                    with open('config/trading_params.yaml', 'r') as f:
+                        yaml_data = yaml.safe_load(f)
+                        self.config = Config(**yaml_data)
+                        self._apply_config(self.config)
+                        logger.info("✅ Configurazione caricata da YAML")
+                except Exception as e:
+                    logger.warning(f"⚠️ Config YAML non trovato: {e}")
+                    self._apply_config(Config())
+        except Exception as e:
+            logger.error(f"❌ Errore caricamento config: {e}")
+            self._apply_config(Config())
+
+    def _apply_config(self, config: Config):
+        self.symbols = [s.lower() for s in config.symbols]
+        for symbol in self.symbols:
+            if symbol not in self.feature_engines:
+                self.feature_engines[symbol] = FeatureEngine(window=100)
+        self.config = config
+
+    async def _redis_listener(self):
+        pubsub = await self.redis.subscribe('config_updated')
+        try:
+            async for message in pubsub.listen():
+                if message['type'] == 'message':
+                    logger.info("🔄 Configurazione aggiornata, ricarico...")
+                    await self._load_config_from_redis()
+        except Exception as e:
+            logger.error(f"❌ Errore Redis listener: {e}")
+            if self.running:
+                await asyncio.sleep(5)
+                asyncio.create_task(self._redis_listener())
 
     def _load_model(self):
         try:
@@ -58,7 +103,7 @@ class MLInference:
     async def _websocket_loop(self):
         while self.running:
             try:
-                logger.info("🔌 Connessione WebSocket Binance (BTC, ETH, SOL)...")
+                logger.info(f"🔌 Connessione WebSocket Binance ({', '.join(s.upper() for s in self.symbols)})...")
                 stream_names = [f"{symbol}@trade" for symbol in self.symbols]
                 stream_url = f"{self.ws_url}?streams={'/'.join(stream_names)}"
 
