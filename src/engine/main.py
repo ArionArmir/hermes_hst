@@ -57,9 +57,15 @@ class TradingEngine:
 
         self._executed_trades = []
 
-        # --- MODELLI ---
-        self.exit_model = ATRExitModel(atr_multiplier_sl=3.0, atr_multiplier_tp=5.5)
-        self.pattern_model = VolumePatternAnalyzer(window=10)
+        # --- MODELLI (uno per simbolo) ---
+        self.exit_models: Dict[str, ATRExitModel] = {
+            symbol.upper(): ATRExitModel(atr_multiplier_sl=5.0, atr_multiplier_tp=5.5)
+            for symbol in self.symbols
+        }
+        self.pattern_models: Dict[str, VolumePatternAnalyzer] = {
+            symbol.upper(): VolumePatternAnalyzer(window=10)
+            for symbol in self.symbols
+        }
 
         self.reverse_trading_enabled = True
         self.pattern_confirmation_enabled = True
@@ -170,17 +176,21 @@ class TradingEngine:
                                 high = price * 1.002
                                 low = price * 0.998
 
-                                self.exit_model.add_price(price, high, low)
-                                self.pattern_model.add_data(price, volume, high, low)
+                                exit_model = self.exit_models.get(symbol)
+                                pattern_model = self.pattern_models.get(symbol)
+                                if exit_model:
+                                    exit_model.add_price(price, high, low)
+                                if pattern_model:
+                                    pattern_model.add_data(price, volume, high, low)
                                 self.latest_prices[symbol] = price
                                 await self.redis.set(f"latest_price_{symbol}", str(price))
 
                                 await self._check_exit_conditions(symbol, price)
 
                                 # Trailing stop dinamico (con logging ridotto)
-                                if symbol in self.positions and self.positions[symbol].is_open and self.dynamic_exit_enabled:
+                                if symbol in self.positions and self.positions[symbol].is_open and self.dynamic_exit_enabled and exit_model:
                                     pos = self.positions[symbol]
-                                    new_sl = self.exit_model.update_trailing_stop(price, pos)
+                                    new_sl = exit_model.update_trailing_stop(price, pos)
                                     if new_sl != pos.stop_loss:
                                         old_sl = pos.stop_loss
                                         pos.stop_loss = new_sl
@@ -235,13 +245,18 @@ class TradingEngine:
                 logger.warning(f"⚠️ Prezzo non disponibile per {symbol}")
                 return
 
+        exit_model = self.exit_models.get(symbol)
+        side = 'long' if signal.action == 'buy' else 'short'
+
         if self.pattern_confirmation_enabled:
-            pattern_result = self.pattern_model.analyze()
-            if pattern_result["signal"] == "REJECT":
-                logger.warning(f"⛔ Segnale rifiutato da Pattern Analyzer: {pattern_result['reason']}")
-                return
-            elif pattern_result["signal"] == "NEUTRAL":
-                logger.info(f"ℹ️ Pattern neutro: {pattern_result['reason']}")
+            pattern_model = self.pattern_models.get(symbol)
+            if pattern_model:
+                pattern_result = pattern_model.analyze()
+                if pattern_result["signal"] == "REJECT":
+                    logger.warning(f"⛔ Segnale rifiutato da Pattern Analyzer: {pattern_result['reason']}")
+                    return
+                elif pattern_result["signal"] == "NEUTRAL":
+                    logger.info(f"ℹ️ Pattern neutro: {pattern_result['reason']}")
 
         leverage = self.leverage
         position_size = min(self.max_position_usdt * leverage, self.capital * self.max_exposure)
@@ -252,9 +267,9 @@ class TradingEngine:
         quantity = position_size / price
         quantity = round(quantity, 3)
 
-        if self.dynamic_exit_enabled:
-            stop_loss, take_profit = self.exit_model.calculate_exit_levels(price, signal.action)
-            logger.info(f"📊 SL/TP dinamici: SL={stop_loss:.2f}, TP={take_profit:.2f} (ATR={self.exit_model._calculate_atr():.2f})")
+        if self.dynamic_exit_enabled and exit_model:
+            stop_loss, take_profit = exit_model.calculate_exit_levels(price, side)
+            logger.info(f"📊 SL/TP dinamici: SL={stop_loss:.2f}, TP={take_profit:.2f} (ATR={exit_model._calculate_atr():.2f})")
         else:
             if signal.action == 'buy':
                 stop_loss = price * (1 - self.stop_loss_pct)
@@ -263,7 +278,6 @@ class TradingEngine:
                 stop_loss = price * (1 + self.stop_loss_pct)
                 take_profit = price * (1 - self.take_profit_pct)
 
-        side = 'long' if signal.action == 'buy' else 'short'
         trailing_stop = price * (1 - self.trailing_stop_pct) if side == 'long' else price * (1 + self.trailing_stop_pct)
 
         position = Position(

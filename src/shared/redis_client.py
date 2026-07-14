@@ -40,8 +40,8 @@ class RedisClient:
         if data:
             try:
                 return json.loads(data)
-            except:
-                pass
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Errore parsing JSON per chiave '{key}': {e}")
         return None
 
     async def publish(self, channel: str, message: Any):

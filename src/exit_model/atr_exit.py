@@ -65,8 +65,6 @@ class ATRExitModel:
             stop_loss = price + atr * self.atr_multiplier_sl
             take_profit = price - atr * self.atr_multiplier_tp
 
-        logger.info(f"🔍 [ATR] Prima dello swap: SL={stop_loss:.2f}, TP={take_profit:.2f}")
-
         # Limiti di sicurezza
         min_sl_pct = 0.01
         max_sl_pct = 0.05
@@ -86,11 +84,7 @@ class ATRExitModel:
         elif tp_pct > max_tp_pct:
             take_profit = price * (1 + max_tp_pct) if side == 'long' else price * (1 - max_tp_pct)
 
-        # Swap finale per correggere inversione
-        final_sl, final_tp = take_profit, stop_loss
-        logger.info(f"🔍 [ATR] Dopo lo swap: SL={final_sl:.2f}, TP={final_tp:.2f}")
-
-        return final_sl, final_tp
+        return stop_loss, take_profit
 
     def update_trailing_stop(self, price: float, position) -> float:
         if not position.is_open:
