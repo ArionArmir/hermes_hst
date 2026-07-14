@@ -36,12 +36,36 @@ def to_ccxt_symbol(symbol_clean: str) -> str:
     return f"{symbol_clean[:-4]}/{symbol_clean[-4:]}"
 
 
+def check_scale_invariance(per_symbol_iqr: dict, max_ratio: float = 50.0):
+    """Guardia per il modello pooled: ogni feature deve avere scala
+    confrontabile su tutti i simboli. Una feature in scala prezzo (es. una SMA
+    grezza: ~60.000 su BTC, ~0,3 su TRX) avrebbe IQR che divergono di ordini
+    di grandezza e permetterebbe al modello di riconoscere il simbolo invece
+    di imparare pattern comuni. Confrontiamo gli IQR (robusti agli outlier,
+    e sensati anche per feature a mediana ~0 come i returns)."""
+    iqr_df = pd.DataFrame(per_symbol_iqr)  # righe = feature, colonne = simboli
+    offending = []
+    for feature, row in iqr_df.iterrows():
+        floor = max(row.min(), 1e-12)
+        ratio = row.max() / floor
+        if ratio > max_ratio:
+            offending.append(f"{feature} (IQR min={row.min():.3g}, max={row.max():.3g})")
+    if offending:
+        logger.warning(
+            "⚠️ Feature NON scale-invariant tra simboli — il modello pooled può "
+            f"riconoscere il simbolo dalla scala: {'; '.join(offending)}"
+        )
+    else:
+        logger.info("✅ Check scale-invariance superato: scale delle feature omogenee tra simboli")
+
+
 def main():
     symbols = load_symbols()
     logger.info(f"📋 Simboli da addestrare: {symbols}")
 
     collector = DataCollector()
     train_parts_X, val_parts_X, train_parts_y, val_parts_y = [], [], [], []
+    per_symbol_iqr = {}
 
     for symbol in symbols:
         symbol_clean = symbol.replace("/", "").upper()
@@ -62,6 +86,7 @@ def main():
         # simboli prima di calcolarle genererebbe valori falsi ai confini.
         X, y = prepare_train_data(df)
         logger.info(f"✅ {symbol_clean}: {len(X)} righe di feature pronte")
+        per_symbol_iqr[symbol_clean] = X.quantile(0.75) - X.quantile(0.25)
 
         # Split temporale (shuffle=False) per singolo simbolo, PRIMA di
         # concatenare: uno split unico sul dataset già unito finirebbe per
@@ -85,6 +110,7 @@ def main():
         f"🧠 Dataset combinato: {len(X_train)} righe di train + {len(X_val)} di validation "
         f"da {len(train_parts_X)} simboli"
     )
+    check_scale_invariance(per_symbol_iqr)
 
     trainer = Trainer()
     trainer.train(X_train, X_val, y_train, y_val)

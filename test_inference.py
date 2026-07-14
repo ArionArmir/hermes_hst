@@ -1,27 +1,46 @@
+#!/usr/bin/env python3
+"""
+Smoke test manuale della pipeline di inference: per ogni simbolo configurato
+carica le candele storiche, calcola le feature con il modulo condiviso e
+interroga il champion — lo stesso identico percorso del processo di inference
+(a parte la sorgente delle candele: parquet invece di REST).
+
+Uso: python test_inference.py
+"""
 import sys
-import numpy as np
 from pathlib import Path
+
+import joblib
+import yaml
+
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.inference.feature_engine import FeatureEngine
+from src.data_collector import DataCollector
+from src.shared.features import compute_latest_features, FEATURE_COLS
 
-# Simula dati reali (50 tick)
-fe = FeatureEngine(window=100)
-for i in range(50):
-    price = 60000 + i * 10 + np.random.randn() * 50
-    volume = 1 + np.random.rand() * 5
-    fe.add_tick(price, volume)
+MODEL_PATH = "config/models/champion.pkl"
 
-# Calcola features
-features = fe.calculate_features()
+model = joblib.load(MODEL_PATH)
+trained_names = list(model.get_booster().feature_names or [])
+assert trained_names == FEATURE_COLS, (
+    f"Champion incompatibile:\n  addestrato su: {trained_names}\n  attese:        {FEATURE_COLS}"
+)
+print(f"✅ Champion compatibile ({len(FEATURE_COLS)} feature validate per nome)")
 
-print(f"Type: {type(features)}")
-print(f"isinstance np.ndarray: {isinstance(features, np.ndarray)}")
-if isinstance(features, np.ndarray):
-    print(f"ndim: {features.ndim}")
-    print(f"shape: {features.shape}")
-    print(f"dtype: {features.dtype}")
-    print(f"size: {features.size}")
-    print(f"values: {features}")
-else:
-    print(f"values: {features}")
+with open("config/trading_params.yaml") as f:
+    symbols = yaml.safe_load(f)["symbols"]
+
+collector = DataCollector()
+for symbol in symbols:
+    df = collector.load_historical(symbol, timeframe="1h")
+    if df.empty:
+        print(f"⚠️ {symbol}: nessun parquet storico, saltato")
+        continue
+    features = compute_latest_features(df.iloc[-200:])
+    if features is None:
+        print(f"⚠️ {symbol}: candele insufficienti")
+        continue
+    prob = model.predict_proba(features)[0][1]
+    print(f"📊 {symbol}: P(up) = {prob:.3f}  (feature ultima candela: ok, nessun NaN)")
+
+print("✅ Smoke test completato")

@@ -43,7 +43,10 @@ class Config(BaseModel):
     max_volatility_threshold: float = 0.02
     volatility_adjustment: bool = True
     symbols: list[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    timeframe: str = '1m'
+    # Deve coincidere con il timeframe delle candele di training
+    # (train_all_models.py): l'inference lo usa per scaricare le candele su
+    # cui calcola le feature.
+    timeframe: str = '1h'
     ml_confidence_threshold: float = 0.55
     sentiment_weight: float = 0.3
     sentiment_asset_enabled: bool = True

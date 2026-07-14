@@ -10,13 +10,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import joblib
-import numpy as np
 import websockets
 from loguru import logger
 from datetime import datetime, timezone
 from src.core.models import Signal, Config
 from src.shared.redis_client import RedisClient
-from src.inference.feature_engine import FeatureEngine
+from src.shared.features import compute_latest_features, FEATURE_COLS
+from src.inference.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
 
 class MLInference:
@@ -28,7 +28,10 @@ class MLInference:
         self.ws = None
         self.ws_url = "wss://fstream.binance.com/stream"
         self.symbols = ["btcusdt", "ethusdt", "solusdt"]
-        self.feature_engines = {symbol: FeatureEngine(window=100) for symbol in self.symbols}
+        # Le feature sono calcolate sulle stesse candele del training
+        # (config.timeframe), scaricate via REST: mai sui tick del WebSocket,
+        # che qui serve solo per prezzi live e candele 1m della dashboard.
+        self.candle_feed = CandleFeed(interval="1h")
         self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
         self.config = None
@@ -70,9 +73,9 @@ class MLInference:
 
     def _apply_config(self, config: Config):
         self.symbols = [s.lower() for s in config.symbols]
-        for symbol in self.symbols:
-            if symbol not in self.feature_engines:
-                self.feature_engines[symbol] = FeatureEngine(window=100)
+        if config.timeframe != self.candle_feed.interval:
+            logger.info(f"🕐 Timeframe candele: {self.candle_feed.interval} → {config.timeframe}")
+            self.candle_feed = CandleFeed(interval=config.timeframe)
         self.config = config
 
     async def _redis_listener(self):
@@ -91,8 +94,21 @@ class MLInference:
     def _load_model(self):
         try:
             if os.path.exists(self.model_path):
-                self.model = joblib.load(self.model_path)
-                logger.info(f"✅ Modello caricato da {self.model_path}")
+                model = joblib.load(self.model_path)
+                # Guardia anti-skew: il modello deve essere stato addestrato
+                # esattamente sulle FEATURE_COLS condivise. Un modello vecchio
+                # o incompatibile qui produrrebbe predizioni silenziosamente
+                # senza senso: meglio nessun segnale che segnali casuali.
+                trained_names = list(model.get_booster().feature_names or [])
+                if trained_names != FEATURE_COLS:
+                    logger.error(
+                        f"❌ Modello incompatibile: addestrato su {trained_names}, "
+                        f"attese {FEATURE_COLS}. Rilanciare train_all_models.py. Nessun segnale verrà emesso."
+                    )
+                    self.model = None
+                    return
+                self.model = model
+                logger.info(f"✅ Modello caricato da {self.model_path} ({len(trained_names)} feature validate)")
             else:
                 logger.warning(f"⚠️ Modello non trovato: {self.model_path}")
                 self.model = None
@@ -123,8 +139,6 @@ class MLInference:
                                     continue
                                 self.latest_prices[symbol] = price
                                 await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
-                                if symbol in self.feature_engines:
-                                    self.feature_engines[symbol].add_tick(price, volume, trade.get('T'))
                                 self.ohlc_aggregator.add_tick(symbol.upper(), price, volume)
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
@@ -151,27 +165,12 @@ class MLInference:
                 positions_data = await self.redis.get_json('positions')
 
                 for symbol in self.symbols:
-                    fe = self.feature_engines.get(symbol)
-                    if fe is None or not fe.is_ready():
-                        continue
-
-                    features = fe.calculate_features()
+                    candles = await self.candle_feed.get_candles(symbol.upper())
+                    # DataFrame 1×N con i nomi di colonna: XGBoost valida che
+                    # corrispondano a quelli visti in training (con un ndarray
+                    # la validazione salterebbe silenziosamente).
+                    features = compute_latest_features(candles)
                     if features is None:
-                        continue
-
-                    if not isinstance(features, np.ndarray):
-                        features = np.array(features)
-                    if features.size == 0:
-                        continue
-                    if features.ndim == 0:
-                        features = features.reshape(1, -1)
-                    elif features.ndim == 1:
-                        features = features.reshape(1, -1)
-                    elif features.ndim > 2:
-                        continue
-
-                    if features.shape[1] != 14:
-                        logger.warning(f"⚠️ Feature mismatch per {symbol}: {features.shape[1]} != 14")
                         continue
 
                     pred = self.model.predict(features)[0]

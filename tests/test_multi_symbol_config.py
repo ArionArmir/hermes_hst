@@ -22,11 +22,22 @@ def test_engine_apply_config_adds_missing_symbol_models_without_discarding_exist
     assert engine.pattern_models["BTCUSDT"] is existing_pattern_model
 
 
-def test_inference_apply_config_adds_missing_feature_engine_without_discarding_existing():
+def test_inference_apply_config_updates_symbols_and_keeps_candle_feed():
     inference = MLInference()
-    existing_feature_engine = inference.feature_engines["btcusdt"]
+    feed_before = inference.candle_feed
 
     inference._apply_config(Config(symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]))
 
-    assert set(inference.feature_engines.keys()) == {"btcusdt", "ethusdt", "solusdt", "xrpusdt"}
-    assert inference.feature_engines["btcusdt"] is existing_feature_engine
+    assert inference.symbols == ["btcusdt", "ethusdt", "solusdt", "xrpusdt"]
+    # Stesso timeframe → il feed (e la sua cache di candele) viene preservato
+    assert inference.candle_feed is feed_before
+
+
+def test_inference_apply_config_recreates_candle_feed_on_timeframe_change():
+    inference = MLInference()
+    feed_before = inference.candle_feed
+
+    inference._apply_config(Config(symbols=["BTCUSDT"], timeframe="15m"))
+
+    assert inference.candle_feed is not feed_before
+    assert inference.candle_feed.interval == "15m"

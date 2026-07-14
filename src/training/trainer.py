@@ -48,7 +48,17 @@ class Trainer:
 
         if os.path.exists(self.model_path):
             champion = joblib.load(self.model_path)
-            champion_acc = accuracy_score(y_val, champion.predict(X_val))
+            try:
+                champion_acc = accuracy_score(y_val, champion.predict(X_val))
+            except Exception as e:
+                # Il champion è stato addestrato su un set di feature diverso
+                # (nomi/ordine non compatibili con FEATURE_COLS attuale): non è
+                # confrontabile né utilizzabile in inference, promuovo il
+                # challenger direttamente.
+                logger.warning(f"⚠️ Champion incompatibile con le feature attuali ({e}), promuovo il challenger")
+                self._swap_model()
+                logger.info("🏆 Challenger promosso per incompatibilità del champion")
+                return True
             if acc > champion_acc:
                 self._swap_model()
                 logger.info(f"🏆 Nuovo champion! {acc:.2%} > {champion_acc:.2%}")
