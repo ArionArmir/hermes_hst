@@ -133,7 +133,7 @@ Non aggiungere altro testo, solo il JSON.
         filename = "data/sentiment_history.csv"
         new_row = pd.DataFrame([{"timestamp": datetime.now(timezone.utc).isoformat(), "score": score}])
         os.makedirs("data", exist_ok=True)
-        if os.path.exists(filename):
+        if os.path.exists(filename) and os.path.getsize(filename) > 0:
             df = pd.read_csv(filename)
             df = pd.concat([df, new_row], ignore_index=True)
         else:

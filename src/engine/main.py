@@ -340,7 +340,7 @@ class TradingEngine:
             'reason': reason
         }])
         os.makedirs("data", exist_ok=True)
-        if os.path.exists(filename):
+        if os.path.exists(filename) and os.path.getsize(filename) > 0:
             df = pd.read_csv(filename)
             df = pd.concat([df, new_row], ignore_index=True)
         else:
