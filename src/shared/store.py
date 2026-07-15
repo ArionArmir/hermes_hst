@@ -131,19 +131,25 @@ def insert_sentiment(scores: dict, timestamp: Optional[str] = None, db_path: Opt
         conn.executemany("INSERT INTO sentiment (timestamp, asset, score) VALUES (?, ?, ?)", rows)
 
 
-def read_trades(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFrame:
+def _read_sql(query: str, limit: int, db_path: Optional[Path]) -> pd.DataFrame:
     with _connect(db_path) as conn:
-        return pd.read_sql_query(
-            "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", conn, params=(limit,))
+        # Difensivo: con pandas 3 le stringhe sono arrow-backed di default e
+        # la loro costruzione può segfaultare in processi che mescolano
+        # librerie native (riprodotto in ambiente di test multi-pagina, vedi
+        # tests/test_dashboard_pages.py). Lo storage "python" per queste
+        # piccole tabelle è funzionalmente identico e tiene questo modulo
+        # fuori da quel percorso.
+        with pd.option_context("mode.string_storage", "python"):
+            return pd.read_sql_query(query, conn, params=(limit,))
+
+
+def read_trades(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFrame:
+    return _read_sql("SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", limit, db_path)
 
 
 def read_signals(limit: int = 200, db_path: Optional[Path] = None) -> pd.DataFrame:
-    with _connect(db_path) as conn:
-        return pd.read_sql_query(
-            "SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", conn, params=(limit,))
+    return _read_sql("SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", limit, db_path)
 
 
 def read_sentiment(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFrame:
-    with _connect(db_path) as conn:
-        return pd.read_sql_query(
-            "SELECT * FROM sentiment ORDER BY timestamp DESC LIMIT ?", conn, params=(limit,))
+    return _read_sql("SELECT * FROM sentiment ORDER BY timestamp DESC LIMIT ?", limit, db_path)

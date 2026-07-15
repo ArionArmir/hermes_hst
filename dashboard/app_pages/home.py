@@ -52,7 +52,7 @@ def render_process_status():
 
 @st.fragment(run_every="5s")
 def render_kpis():
-    trades_df = formatting.load_trades_history()
+    trades_df = formatting.load_trades()
     capitale_attuale, max_drawdown = formatting.compute_capital_and_drawdown(trades_df)
     equity = formatting.equity_curve(trades_df)
 
@@ -137,7 +137,7 @@ with col_positions:
     render_positions()
 with col_trades:
     st.subheader("Ultime operazioni")
-    trades_df = formatting.load_trades_history()
+    trades_df = formatting.load_trades()
     if trades_df.empty:
         st.info("Nessuna operazione registrata")
     else:
@@ -159,10 +159,23 @@ with tab_sentiment:
     if by_asset:
         st.dataframe(pd.DataFrame([by_asset]), hide_index=True, width="stretch")
 with tab_signals:
-    log_text = process_manager.tail_log("inference", n=200)
-    signals = [line for line in log_text.splitlines() if "Segnale ML" in line]
-    if signals:
-        for line in signals[-20:]:
-            st.code(line)
+    # Ultime decisioni dal db (tabella signals): la vista completa con
+    # filtri è nella pagina Analisi
+    from src.shared import store
+
+    signals_df = store.read_signals(limit=10)
+    if signals_df.empty:
+        st.info("Nessuna decisione sui segnali registrata ancora")
     else:
-        st.info("Nessun segnale ML disponibile")
+        signals_df["timestamp"] = pd.to_datetime(signals_df["timestamp"])
+        st.dataframe(
+            signals_df[["timestamp", "symbol", "action", "weighted_confidence", "outcome", "detail"]],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "timestamp": st.column_config.DatetimeColumn("Quando", format="DD/MM HH:mm:ss"),
+                "weighted_confidence": st.column_config.NumberColumn("Conf. pesata", format="%.2f"),
+            },
+        )
+        st.page_link("app_pages/analysis.py", label="Vista completa nella pagina Analisi",
+                     icon=":material/analytics:")

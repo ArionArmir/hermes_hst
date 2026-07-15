@@ -19,6 +19,20 @@ def load_trades_history() -> pd.DataFrame:
     return df.sort_values("timestamp")
 
 
+def load_trades() -> pd.DataFrame:
+    """Storico trade con SQLite come fonte di verità (include fee ed equity
+    capital_after) e fallback al CSV per gli storici precedenti al db."""
+    try:
+        from src.shared import store
+        df = store.read_trades(limit=5000)
+        if not df.empty:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            return df.sort_values("timestamp")
+    except Exception:
+        pass
+    return load_trades_history()
+
+
 def compute_capital_and_drawdown(
     trades_df: pd.DataFrame, capitale_iniziale: float = CAPITALE_INIZIALE
 ) -> Tuple[float, float]:

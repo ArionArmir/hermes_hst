@@ -71,13 +71,9 @@ def main():
 
     for symbol in symbols:
         symbol_clean = symbol.replace("/", "").upper()
-        df = collector.load_historical(symbol_clean, timeframe="1h")
-
-        if df.empty:
-            logger.info(f"📥 Scarico {symbol_clean}...")
-            df = collector.download_historical(to_ccxt_symbol(symbol_clean), timeframe="1h", days=365)
-            if not df.empty:
-                collector.save_to_parquet(df, symbol_clean, timeframe="1h")
+        # Refresh incrementale del parquet fino a ora (download completo se
+        # assente): il retraining deve sempre vedere il mercato recente
+        df = collector.update_historical(to_ccxt_symbol(symbol_clean), symbol_clean, timeframe="1h")
 
         if df.empty:
             logger.error(f"❌ Impossibile ottenere dati per {symbol_clean}, saltato")

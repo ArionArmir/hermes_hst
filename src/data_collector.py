@@ -46,6 +46,44 @@ class DataCollector:
             return df_final
         return pd.DataFrame()
 
+    def update_historical(self, symbol_ccxt: str, symbol_clean: str, timeframe: str = '1h') -> pd.DataFrame:
+        """Carica il parquet e lo estende con le candele mancanti fino a ora
+        (parquet assente → scarica 365 giorni da zero). Senza questo refresh
+        il retraining schedulato riaddestrerebbe per sempre sugli stessi
+        dati congelati alla data del primo download.
+
+        L'ultima candela salvata viene riscaricata e sostituita (keep='last'):
+        al download precedente poteva essere ancora in formazione."""
+        df = self.load_historical(symbol_clean, timeframe)
+        if df.empty:
+            df = self.download_historical(symbol_ccxt, timeframe, days=365)
+            if not df.empty:
+                self.save_to_parquet(df, symbol_clean, timeframe)
+            return df
+
+        since = int(df.index.max().timestamp() * 1000)
+        new_batches = []
+        while True:
+            batch = self.fetch_ohlcv(symbol_ccxt, timeframe, limit=1000, since=since)
+            if batch.empty:
+                break
+            new_batches.append(batch)
+            if len(batch) < 1000:
+                break
+            since = int(batch.index[-1].timestamp() * 1000) + 1
+            time.sleep(0.5)  # rate limit
+
+        if new_batches:
+            before = len(df)
+            df = pd.concat([df] + new_batches)
+            df = df[~df.index.duplicated(keep='last')].sort_index()
+            self.save_to_parquet(df, symbol_clean, timeframe)
+            logger.info(
+                f"🔄 {symbol_clean}: parquet aggiornato con {len(df) - before} candele nuove "
+                f"(ultima: {df.index.max()})"
+            )
+        return df
+
     def save_to_parquet(self, df: pd.DataFrame, symbol: str, timeframe: str = '1h'):
         """Salva i dati in formato Parquet"""
         os.makedirs('data/historical', exist_ok=True)
