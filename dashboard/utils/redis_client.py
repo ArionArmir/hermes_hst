@@ -3,6 +3,7 @@ Client Redis sincrono per la dashboard (redis-py, non l'async src/shared/redis_c
 Evita di dover gestire un event loop dentro Streamlit.
 """
 import json
+import os
 from typing import Optional
 
 import redis
@@ -13,7 +14,9 @@ HEARTBEAT_SERVICES = ("engine", "inference", "sentiment")
 
 @st.cache_resource
 def get_client() -> redis.Redis:
-    return redis.Redis(host="localhost", port=6379, decode_responses=True)
+    return redis.Redis(host=os.getenv("REDIS_HOST", "localhost"),
+                       port=int(os.getenv("REDIS_PORT", "6379")),
+                       decode_responses=True)
 
 
 def get_json(key: str) -> Optional[dict]:

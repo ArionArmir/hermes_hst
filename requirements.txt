@@ -50,7 +50,8 @@ propcache==0.5.2
 protobuf==7.35.1
 psutil==7.2.2
 # pyarrow 25.0.0 segfaulta nel runtime Streamlit (serializzazione IPC e
-# costruzione stringhe arrow): crash al cambio tab/pagina. Verificato con
+# costruzione stringhe arrow, es. in read_csv/read_sql): crash al cambio
+# tab/pagina, confermato indipendentemente su due macchine. Verificato con
 # riproduttore deterministico: 22.0.0 e 24.0.0 pulite. Non alzare senza ritestare.
 pyarrow==24.0.0
 pycares==5.0.1

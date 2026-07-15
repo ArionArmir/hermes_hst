@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -20,6 +22,11 @@ TICK_STALE_AFTER_SECONDS = 30
 STATUS_ICON = {"ok": "🟢", "stale": "🟡", "down": "🔴"}
 SERVICES_WITH_TICK_FEED = ("engine", "inference")
 
+# Nello stack Docker i servizi sono container: dentro il container della
+# dashboard non esistono PID locali da interrogare (pgrep vedrebbe solo se
+# stessa), quindi lo stato viene dai soli heartbeat su Redis.
+IN_DOCKER = bool(os.getenv("HERMES_IN_DOCKER"))
+
 
 def _get_symbols() -> list[str]:
     config = get_trading_config()
@@ -32,21 +39,34 @@ def _get_symbols() -> list[str]:
 def render_process_status():
     with st.container(horizontal=True):
         for service in SERVICES:
-            proc_status = process_manager.status(service)
             heartbeat = get_heartbeat(service)
-            state = formatting.heartbeat_status(
-                heartbeat, proc_status["running"], STALE_AFTER_SECONDS[service]
-            )
+            if IN_DOCKER:
+                # Heartbeat assente = servizio giù; presente ma vecchio = stale.
+                if not heartbeat:
+                    state = "down"
+                elif formatting.age_seconds(heartbeat) <= STALE_AFTER_SECONDS[service]:
+                    state = "ok"
+                else:
+                    state = "stale"
+                running = state != "down"
+                origin_label = f"container `{service}`"
+            else:
+                proc_status = process_manager.status(service)
+                state = formatting.heartbeat_status(
+                    heartbeat, proc_status["running"], STALE_AFTER_SECONDS[service]
+                )
+                running = proc_status["running"]
+                origin_label = f"PID: {proc_status['pids'] or '—'}"
             with st.container(border=True):
                 st.markdown(f"**{STATUS_ICON[state]} {service.capitalize()}**")
-                st.caption(f"PID: {proc_status['pids'] or '—'}")
+                st.caption(origin_label)
                 if service in SERVICES_WITH_TICK_FEED:
                     last_tick = get_last_tick(service)
                     if last_tick:
                         tick_age = formatting.age_seconds(last_tick)
                         tick_icon = "🟢" if tick_age <= TICK_STALE_AFTER_SECONDS else "🔴"
                         st.caption(f"{tick_icon} Ultimo tick: {tick_age:.0f}s fa")
-                    elif proc_status["running"]:
+                    elif running:
                         st.caption("🔴 Nessun tick ricevuto")
 
 
