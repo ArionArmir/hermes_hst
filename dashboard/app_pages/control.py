@@ -1,3 +1,5 @@
+import os
+
 import streamlit as st
 
 from src.core.models import Config
@@ -8,8 +10,31 @@ SERVICES = ["engine", "inference", "sentiment"]
 STALE_AFTER_SECONDS = {"engine": 20, "inference": 20, "sentiment": 60}
 STATUS_ICON = {"ok": "🟢", "stale": "🟡", "down": "🔴"}
 
+# Nello stack Docker ogni servizio è un container: il process_manager
+# (start.sh + PID locali) non può avviarli/fermarli da dentro il container
+# della dashboard, quindi mostriamo solo lo stato dagli heartbeat.
+IN_DOCKER = bool(os.getenv("HERMES_IN_DOCKER"))
+
 st.subheader("Processi")
-for service in SERVICES:
+if IN_DOCKER:
+    st.info(
+        "Stack gestito da Docker Compose: per avviare/fermare i servizi usa "
+        "`docker compose start|stop|restart engine|inference|sentiment`. "
+        "Lo stato qui sotto riflette gli heartbeat su Redis."
+    )
+    for service in SERVICES:
+        heartbeat = get_heartbeat(service)
+        # Heartbeat assente = servizio giù; presente ma vecchio = stale.
+        if not heartbeat:
+            state = "down"
+        elif formatting.age_seconds(heartbeat) <= STALE_AFTER_SECONDS[service]:
+            state = "ok"
+        else:
+            state = "stale"
+        with st.container(border=True):
+            st.markdown(f"**{STATUS_ICON[state]} {service.capitalize()}** — container `{service}`")
+
+for service in ([] if IN_DOCKER else SERVICES):
     proc_status = process_manager.status(service)
     heartbeat = get_heartbeat(service)
     state = formatting.heartbeat_status(heartbeat, proc_status["running"], STALE_AFTER_SECONDS[service])

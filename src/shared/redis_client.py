@@ -2,15 +2,18 @@
 Client Redis con connessione asincrona
 """
 import json
+import os
 import redis.asyncio as aioredis
 from loguru import logger
 from typing import Optional, Any, Dict
 from src.shared.json_encoder import to_json
 
 class RedisClient:
-    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0):
-        self.host = host
-        self.port = port
+    def __init__(self, host: str = None, port: int = None, db: int = 0):
+        # In Docker l'host arriva da REDIS_HOST (es. il nome del servizio
+        # compose); il default localhost preserva l'avvio manuale su WSL.
+        self.host = host or os.getenv("REDIS_HOST", "localhost")
+        self.port = int(port or os.getenv("REDIS_PORT", "6379"))
         self.db = db
         self.redis: Optional[aioredis.Redis] = None
         self._pubsub: Optional[aioredis.client.PubSub] = None

@@ -1,0 +1,123 @@
+# Stack Hermes completo: infrastruttura (redis, ollama) + servizi applicativi.
+# Tutti i servizi Python usano la stessa immagine (vedi Dockerfile) e cambiano
+# solo il command. config/, data/ e logs/ sono bind mount condivisi: trainer e
+# backtest possono girare sull'host e i container vedono subito i nuovi file
+# (es. un nuovo champion.pkl, ricaricato a caldo via canale model_swap).
+#
+# NOTA: non avviare lo stack mentre i processi girano ancora a mano sull'host
+# (doppio engine = doppio paper trading sugli stessi CSV/log).
+
+name: hermes
+
+x-app-base: &app-base
+  build: .
+  image: hermes-app
+  environment:
+    REDIS_HOST: redis
+    OLLAMA_HOST: http://ollama:11434
+    HERMES_IN_DOCKER: "1"
+    # Un segfault in un'estensione C non lascia traceback: col faulthandler
+    # attivo lo stack finisce nei log del container.
+    PYTHONFAULTHANDLER: "1"
+  env_file:
+    - path: .env        # Telegram/SMTP per il notifier; opzionale
+      required: false
+  volumes:
+    - ./config:/app/config
+    - ./data:/app/data
+    - ./logs:/app/logs
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    # Per usare la GPU (WSL2 con driver NVIDIA): decommenta il blocco.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot: scarica il modello LLM nel volume di ollama al primo avvio
+  # (i successivi sono no-op). Il sentiment degrada a neutro finché il pull
+  # non è completato.
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"]
+    restart: "no"
+
+  engine:
+    <<: *app-base
+    command: python -m src.engine.main
+
+  inference:
+    <<: *app-base
+    command: python -m src.inference.main
+
+  sentiment:
+    <<: *app-base
+    command: python -m src.sentiment.ollama_client
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  dashboard:
+    <<: *app-base
+    # Dentro il container 0.0.0.0 è obbligatorio, ma la porta è pubblicata
+    # solo su 127.0.0.1 dell'host: la dashboard può modificare config e
+    # chiudere posizioni, non deve essere raggiungibile dalla LAN.
+    command: streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
+
+  # Il watchdog nasce one-shot (pensato per cron): qui gira in loop.
+  # Niente --restart: dentro Docker il riavvio dei processi è compito
+  # delle restart policy di compose, il watchdog fa solo da allarme.
+  watchdog:
+    <<: *app-base
+    command: sh -c 'while true; do python watchdog.py; sleep 60; done'
+
+volumes:
+  redis-data:
+  ollama-data:
+
+# WSL2: eth0 ha MTU 1420, i bridge Docker nascono a 1500 — i frame grandi
+# (stream WebSocket Binance) superano il path MTU e la connessione muore
+# con "no close frame received". Allineiamo la rete compose a eth0.
+networks:
+  default:
+    driver_opts:
+      com.docker.network.driver.mtu: "1420"

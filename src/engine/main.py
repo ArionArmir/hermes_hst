@@ -89,7 +89,7 @@ class TradingEngine:
 
     async def initialize(self):
         logger.info("🚀 Avvio Trading Engine...")
-        self.redis = RedisClient(host="localhost")
+        self.redis = RedisClient()
         await self.redis.connect()
         await self._load_config_from_redis()
         await self._bootstrap_candle_models()

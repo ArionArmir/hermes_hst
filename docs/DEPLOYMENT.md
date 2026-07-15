@@ -1,6 +1,6 @@
 # Deployment
 
-> **Stato attuale**: il repository non include ancora artefatti di deployment "pronti" (nessun `Dockerfile`, nessun unit file `systemd`). Questo documento descrive come portare in produzione l'architettura esistente (3 processi Python + Redis + dashboard Streamlit) usando gli strumenti già presenti (`start.sh`, `dashboard/utils/process_manager.py`) e alcune raccomandazioni per renderla più robusta in esecuzione continua.
+> **Stato attuale**: il repository include `Dockerfile` e `docker-compose.yml` per l'esecuzione containerizzata dell'intero stack — vedi [DOCKER.md](DOCKER.md), che è la via consigliata per l'esecuzione continuativa. Questo documento descrive l'alternativa senza container (processi nativi + `systemd`) e le raccomandazioni valide in entrambi i casi: backup, aggiornamenti, sicurezza.
 
 ## Indice
 

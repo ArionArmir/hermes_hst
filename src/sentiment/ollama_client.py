@@ -22,7 +22,7 @@ class OllamaSentiment:
 
     async def initialize(self):
         logger.info("🧠 Avvio Agente Sentiment avanzato...")
-        self.redis = RedisClient(host="localhost")
+        self.redis = RedisClient()
         await self.redis.connect()
         asyncio.create_task(self._sentiment_loop())
         asyncio.create_task(self._heartbeat_loop())

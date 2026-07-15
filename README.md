@@ -110,6 +110,8 @@ streamlit run dashboard/app.py
 
 A questo punto la dashboard è raggiungibile su `http://localhost:8501`.
 
+In alternativa l'intero stack (Redis e Ollama compresi) si avvia containerizzato con `docker compose up -d --build` — guida completa in [docs/DOCKER.md](docs/DOCKER.md).
+
 ## Configurazione
 
 Hermes HFT usa due livelli di configurazione:

@@ -40,7 +40,7 @@ class MLInference:
 
     async def initialize(self):
         logger.info("🧠 Avvio ML Inference con dati reali...")
-        self.redis = RedisClient(host="localhost")
+        self.redis = RedisClient()
         await self.redis.connect()
         await self._load_config_from_redis()
         self._load_model()

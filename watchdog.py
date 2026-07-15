@@ -98,7 +98,9 @@ def main() -> int:
     from src.shared.notifier import Notifier
     notifier = Notifier()  # istanziato DOPO load_env, l'istanza globale del modulo leggerebbe env vuote
 
-    client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+    client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"),
+                         port=int(os.getenv("REDIS_PORT", "6379")),
+                         decode_responses=True)
     try:
         client.ping()
     except redis.RedisError as e:
