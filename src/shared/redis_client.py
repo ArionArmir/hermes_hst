@@ -53,10 +53,21 @@ class RedisClient:
         await self.redis.publish(channel, message)
 
     async def subscribe(self, channel: str):
+        """DEPRECATO per i listener con recovery: riusa un unico pubsub
+        condiviso, che dopo un errore di connessione può restare
+        irrecuperabile. Usare subscribe_fresh."""
         if self._pubsub is None:
             self._pubsub = self.redis.pubsub()
         await self._pubsub.subscribe(channel)
         return self._pubsub
+
+    async def subscribe_fresh(self, *channels: str):
+        """Nuovo oggetto pubsub iscritto ai canali indicati. Per i listener
+        che si ricreano dopo un errore: il pubsub precedente potrebbe essere
+        morto insieme alla connessione, riusarlo fallirebbe per sempre."""
+        pubsub = self.redis.pubsub()
+        await pubsub.subscribe(*channels)
+        return pubsub
 
     async def close(self):
         if self.redis:

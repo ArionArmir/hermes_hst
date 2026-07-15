@@ -23,6 +23,7 @@ from src.shared.redis_client import RedisClient
 from src.shared.notifier import notifier
 from src.shared.json_encoder import to_json
 from src.shared.candle_feed import CandleFeed
+from src.shared.throttle import WriteThrottle
 from src.shared import store
 from src.exit_model import ATRExitModel
 from src.exit_model.profiles import build_exit_model as _build_exit_model
@@ -51,6 +52,10 @@ class TradingEngine:
         self._config_reload_lock = asyncio.Lock()
 
         self.ws_url = "wss://fstream.binance.com/stream"
+        # Persistenza dei tick limitata (0.5s/chiave): lo stato in memoria
+        # resta per-tick, Redis no — vedi src/shared/throttle.py
+        self._tick_throttle = WriteThrottle(interval_seconds=0.5)
+        self._listener_backoff_seconds = 5
         self.symbols = ["btcusdt", "ethusdt", "solusdt"]
 
         self.leverage = 3
@@ -314,8 +319,10 @@ class TradingEngine:
 
                                 exit_model = self.exit_models.get(symbol)
                                 self.latest_prices[symbol] = price
-                                await self.redis.set(f"latest_price_{symbol}", str(price))
-                                await self.redis.set('last_tick_engine', datetime.now(timezone.utc).isoformat())
+                                if self._tick_throttle.ready(f"latest_price_{symbol}"):
+                                    await self.redis.set(f"latest_price_{symbol}", str(price))
+                                if self._tick_throttle.ready("last_tick_engine"):
+                                    await self.redis.set('last_tick_engine', datetime.now(timezone.utc).isoformat())
 
                                 await self._check_exit_conditions(symbol, price)
 
@@ -568,59 +575,69 @@ class TradingEngine:
             if self.positions[symbol].is_open:
                 await self._close_position(symbol, reason=reason)
 
-    async def _redis_listener(self):
-        pubsub = await self.redis.subscribe('ml_signals')
-        await self.redis.subscribe('sentiment_update')
-        await self.redis.subscribe('config_updated')
-        await self.redis.subscribe('sentiment_asset')
-        await self.redis.subscribe('engine_commands')
+    LISTENER_CHANNELS = ('ml_signals', 'sentiment_update', 'config_updated',
+                         'sentiment_asset', 'engine_commands')
 
-        try:
-            async for message in pubsub.listen():
-                if message['type'] == 'message':
-                    channel = message['channel']
+    async def _redis_listener(self):
+        """Loop con recovery: a ogni errore si ri-sottoscrive con un pubsub
+        NUOVO (il vecchio schema ricreava il task riusando lo stesso pubsub,
+        che dopo un errore di connessione può essere irrecuperabile → il
+        listener moriva in silenzio e l'engine smetteva di ricevere segnali)."""
+        while self.running:
+            try:
+                pubsub = await self.redis.subscribe_fresh(*self.LISTENER_CHANNELS)
+                logger.info(f"👂 Listener Redis attivo su: {', '.join(self.LISTENER_CHANNELS)}")
+                async for message in pubsub.listen():
+                    if message['type'] != 'message':
+                        continue
                     data = message['data']
                     if isinstance(data, bytes):
                         data = data.decode('utf-8')
+                    channel = message['channel']
+                    if isinstance(channel, bytes):
+                        channel = channel.decode('utf-8')
+                    await self._handle_channel_message(channel, data)
+                    if not self.running:
+                        break
+            except Exception as e:
+                logger.error(f"❌ Errore Redis listener: {e}")
+                if self.running:
+                    await asyncio.sleep(self._listener_backoff_seconds)
 
-                    if channel == 'ml_signals':
-                        try:
-                            signal_data = json.loads(data)
-                            signal = Signal(**signal_data)
-                            await self._on_signal(signal)
-                        except Exception as e:
-                            logger.error(f"❌ Errore parsing segnale ML: {e}")
-                    elif channel == 'sentiment_update':
-                        try:
-                            self.sentiment_score = float(data)
-                            logger.info(f"🧠 Sentiment aggiornato: {self.sentiment_score:.2f}")
-                        except Exception as e:
-                            logger.error(f"❌ Errore parsing sentiment: {e}")
-                    elif channel == 'sentiment_asset':
-                        try:
-                            self._on_sentiment_asset(data)
-                        except Exception as e:
-                            logger.error(f"❌ Errore parsing sentiment asset: {e}")
-                    elif channel == 'config_updated':
-                        logger.info("🔄 Configurazione aggiornata, ricarico...")
-                        await self._load_config_from_redis()
-                        # Simboli eventualmente aggiunti partono con ATR/pattern
-                        # già caldi (idempotente: i simboli già caldi vengono saltati)
-                        await self._bootstrap_candle_models()
-                    elif channel == 'engine_commands':
-                        try:
-                            command = json.loads(data)
-                            if command.get('action') == 'close_all':
-                                reason = command.get('reason', 'MANUAL_RESET')
-                                logger.warning(f"⛔ Comando ricevuto: chiusura di tutte le posizioni ({reason})")
-                                await self._close_all_positions(reason)
-                        except Exception as e:
-                            logger.error(f"❌ Errore comando engine: {e}")
-        except Exception as e:
-            logger.error(f"❌ Errore Redis listener: {e}")
-            if self.running:
-                await asyncio.sleep(5)
-                asyncio.create_task(self._redis_listener())
+    async def _handle_channel_message(self, channel: str, data: str):
+        if channel == 'ml_signals':
+            try:
+                signal_data = json.loads(data)
+                signal = Signal(**signal_data)
+                await self._on_signal(signal)
+            except Exception as e:
+                logger.error(f"❌ Errore parsing segnale ML: {e}")
+        elif channel == 'sentiment_update':
+            try:
+                self.sentiment_score = float(data)
+                logger.info(f"🧠 Sentiment aggiornato: {self.sentiment_score:.2f}")
+            except Exception as e:
+                logger.error(f"❌ Errore parsing sentiment: {e}")
+        elif channel == 'sentiment_asset':
+            try:
+                self._on_sentiment_asset(data)
+            except Exception as e:
+                logger.error(f"❌ Errore parsing sentiment asset: {e}")
+        elif channel == 'config_updated':
+            logger.info("🔄 Configurazione aggiornata, ricarico...")
+            await self._load_config_from_redis()
+            # Simboli eventualmente aggiunti partono con ATR/pattern
+            # già caldi (idempotente: i simboli già caldi vengono saltati)
+            await self._bootstrap_candle_models()
+        elif channel == 'engine_commands':
+            try:
+                command = json.loads(data)
+                if command.get('action') == 'close_all':
+                    reason = command.get('reason', 'MANUAL_RESET')
+                    logger.warning(f"⛔ Comando ricevuto: chiusura di tutte le posizioni ({reason})")
+                    await self._close_all_positions(reason)
+            except Exception as e:
+                logger.error(f"❌ Errore comando engine: {e}")
 
     def _record_signal(self, signal: Signal, outcome: str,
                        weighted_confidence: float = None, detail: str = ""):

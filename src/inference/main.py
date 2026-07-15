@@ -18,6 +18,7 @@ from src.shared.redis_client import RedisClient
 from src.shared.features import compute_latest_features, FEATURE_COLS
 from src.shared.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
+from src.shared.throttle import WriteThrottle
 from src.training.feature_engine import TARGET_DOWN, TARGET_FLAT, TARGET_UP
 from src.shared.signal_policy import signal_from_proba, SIGNAL_PROB_THRESHOLD
 
@@ -34,6 +35,10 @@ class MLInference:
         # (config.timeframe), scaricate via REST: mai sui tick del WebSocket,
         # che qui serve solo per prezzi live e candele 1m della dashboard.
         self.candle_feed = CandleFeed(interval="1h")
+        # Persistenza dei tick limitata (0.5s): lo stato in memoria resta
+        # per-tick, Redis no — vedi src/shared/throttle.py
+        self._tick_throttle = WriteThrottle(interval_seconds=0.5)
+        self._listener_backoff_seconds = 5
         self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
         self.config = None
@@ -80,18 +85,26 @@ class MLInference:
             self.candle_feed = CandleFeed(interval=config.timeframe)
         self.config = config
 
+    LISTENER_CHANNELS = ('config_updated', 'model_swap')
+
     async def _redis_listener(self):
-        pubsub = await self.redis.subscribe('config_updated')
-        await self.redis.subscribe('model_swap')
-        try:
-            async for message in pubsub.listen():
-                if message['type'] == 'message':
-                    await self._on_pubsub_message(message['channel'])
-        except Exception as e:
-            logger.error(f"❌ Errore Redis listener: {e}")
-            if self.running:
-                await asyncio.sleep(5)
-                asyncio.create_task(self._redis_listener())
+        """Loop con recovery e pubsub NUOVO a ogni errore (il vecchio schema
+        riusava lo stesso pubsub, potenzialmente irrecuperabile dopo un
+        errore di connessione: il listener moriva in silenzio e l'inference
+        smetteva di ricevere reload di config e swap del modello)."""
+        while self.running:
+            try:
+                pubsub = await self.redis.subscribe_fresh(*self.LISTENER_CHANNELS)
+                logger.info(f"👂 Listener Redis attivo su: {', '.join(self.LISTENER_CHANNELS)}")
+                async for message in pubsub.listen():
+                    if message['type'] == 'message':
+                        await self._on_pubsub_message(message['channel'])
+                    if not self.running:
+                        break
+            except Exception as e:
+                logger.error(f"❌ Errore Redis listener: {e}")
+                if self.running:
+                    await asyncio.sleep(self._listener_backoff_seconds)
 
     async def _on_pubsub_message(self, channel: str):
         if isinstance(channel, bytes):
@@ -166,7 +179,8 @@ class MLInference:
                                 if price <= 0 or volume <= 0:
                                     continue
                                 self.latest_prices[symbol] = price
-                                await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
+                                if self._tick_throttle.ready("last_tick_inference"):
+                                    await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
                                 self.ohlc_aggregator.add_tick(symbol.upper(), price, volume)
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
