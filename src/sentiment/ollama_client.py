@@ -107,6 +107,16 @@ Non aggiungere altro testo, solo il JSON.
                 }
                 async with session.post(f"{self.ollama_host}/api/generate", json=payload, timeout=45) as resp:
                     data = await resp.json()
+                    # Un errore API (es. modello non scaricato: HTTP 404 con
+                    # campo "error") non ha 'response': senza questo check
+                    # degraderebbe a zeri SENZA loggare nulla — successo il
+                    # 2026-07-15 con la unit systemd di ollama senza modelli.
+                    if resp.status != 200 or 'error' in data:
+                        logger.error(
+                            f"❌ Ollama API errore (HTTP {resp.status}): {data.get('error', 'sconosciuto')} "
+                            f"— sentiment neutro"
+                        )
+                        return neutral
                     response = data.get('response', '{}').strip()
                     try:
                         return self._normalize_scores(json.loads(response), assets)
