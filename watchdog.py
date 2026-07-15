@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Watchdog degli heartbeat: legge da Redis i segni di vita dei processi
-(heartbeat_* e last_tick_*) e notifica via Telegram/email quando qualcosa è
-fermo oltre soglia. Pensato per girare da cron ogni minuto:
+(heartbeat_* e last_tick_*), verifica che Ollama risponda su HTTP e
+notifica via Telegram/email quando qualcosa è fermo oltre soglia.
+Pensato per girare da cron ogni minuto:
 
     * * * * * cd /home/alexbi/hermes_hft && venv/bin/python watchdog.py >> logs/watchdog.log 2>&1
 
@@ -23,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+import requests
+
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -39,6 +42,7 @@ CHECKS = {
 RESTARTABLE = ("engine", "inference", "sentiment")
 ALERT_STATE_KEY = "watchdog_alerted"
 REDIS_DOWN_MARKER = REPO_ROOT / "logs" / ".watchdog_redis_down"
+OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
 
 def load_env(path: Path = REPO_ROOT / ".env"):
@@ -75,6 +79,22 @@ def evaluate_checks(redis_values: Dict[str, Optional[str]],
         else:
             problems[name] = None
     return problems
+
+
+def check_ollama(base_url: Optional[str] = None) -> Optional[str]:
+    """None se Ollama risponde, descrizione del problema altrimenti.
+    Serve perché il processo sentiment DEGRADA senza errori fatali quando
+    Ollama è giù (pubblica punteggi neutri 0) e nessun heartbeat lo rivela:
+    successo il 2026-07-15 — un'intera giornata di sentiment a zero dopo un
+    riavvio di WSL con la unit ollama disabilitata, senza alcun alert."""
+    url = (base_url or os.getenv("OLLAMA_HOST", OLLAMA_DEFAULT_URL)).rstrip("/") + "/api/version"
+    try:
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            return None
+        return f"HTTP {resp.status_code} da {url}"
+    except requests.RequestException as e:
+        return f"non raggiungibile ({url}): {e.__class__.__name__}"
 
 
 def split_transitions(previously_alerted: Set[str],
@@ -116,6 +136,7 @@ def main() -> int:
     keys = [spec["key"] for spec in CHECKS.values()]
     values = dict(zip(keys, client.mget(keys)))
     problems = evaluate_checks(values, now)
+    problems["ollama"] = check_ollama()
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 
