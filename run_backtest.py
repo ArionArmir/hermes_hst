@@ -51,6 +51,9 @@ def main():
         leverage=config.get("leverage", 3),
         max_exposure=config.get("max_exposure", 0.5),
         taker_fee_pct=config.get("taker_fee_pct", 0.0005),
+        # Stessa soglia del sistema live: ml_confidence_threshold è l'unico
+        # regolatore di selettività (usato da inference e policy)
+        prob_threshold=config.get("ml_confidence_threshold", 0.55),
     )
     results = backtest_portfolio(model, candles_by_symbol, params)
 

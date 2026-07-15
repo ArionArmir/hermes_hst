@@ -7,10 +7,9 @@ Anti flip-flop dell'engine (docs/IMPROVEMENT_PLAN.md, S3):
 - isteresi sul reverse: per invertire serve confidenza extra rispetto
   alla soglia di ingresso.
 
-Nota sui numeri: con sentiment neutro la confidenza pesata è
-(1 - sentiment_weight) × confidenza = 0.7 × conf. Soglia base 0.55,
-con isteresi 0.60 → conf 0.9 → 0.63 (passa tutto), conf 0.8 → 0.56
-(passa la base, non l'isteresi).
+Nota sui numeri: con sentiment neutro la confidenza pesata è la confidenza
+del modello (bonus-only). Soglia base 0.55, con isteresi 0.60 →
+conf 0.9 passa tutto; conf 0.58 passa la base ma non l'isteresi.
 """
 import asyncio
 import sys
@@ -68,9 +67,9 @@ def test_reverse_blocked_by_hysteresis_margin():
     engine = _make_engine()
     _open_long(engine, minutes_ago=30)  # cooldown superato
 
-    # 0.7 × 0.8 = 0.56: sopra la soglia base (0.55), sotto quella con
-    # isteresi (0.60) → nessuna inversione
-    _send(engine, action="sell", confidence=0.8)
+    # 0.58: sopra la soglia base (0.55), sotto quella con isteresi (0.60)
+    # → nessuna inversione
+    _send(engine, action="sell", confidence=0.58)
 
     assert engine.positions["BTCUSDT"].is_open
     assert engine.positions["BTCUSDT"].side == "long"
@@ -80,7 +79,7 @@ def test_reverse_allowed_when_old_enough_and_confident():
     engine = _make_engine()
     _open_long(engine, minutes_ago=30)
 
-    # 0.7 × 0.9 = 0.63 ≥ 0.60 → il long viene chiuso e si apre lo short
+    # 0.9 ≥ 0.60 → il long viene chiuso e si apre lo short
     _send(engine, action="sell", confidence=0.9)
 
     assert engine.positions["BTCUSDT"].is_open

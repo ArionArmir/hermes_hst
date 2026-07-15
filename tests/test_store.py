@@ -60,8 +60,8 @@ def test_sentiment_rows_per_asset(monkeypatch, tmp_path):
 def test_signal_outcomes_are_recorded(monkeypatch, tmp_path):
     engine = _make_engine(monkeypatch, tmp_path)
 
-    # 1. confidenza bassa: 0.7 × 0.7 = 0.49 < 0.55
-    _send(engine, confidence=0.7)
+    # 1. confidenza bassa: 0.5 < 0.55
+    _send(engine, confidence=0.5)
     # 2. veto sentiment
     engine.sentiment_by_asset["BTCUSDT"] = -0.9
     _send(engine, confidence=0.95)
@@ -74,7 +74,8 @@ def test_signal_outcomes_are_recorded(monkeypatch, tmp_path):
     signals = store.read_signals().sort_values("id")
     assert list(signals["outcome"]) == ["LOW_CONFIDENCE", "SENTIMENT_VETO", "OPENED", "ALREADY_OPEN"]
     opened = signals[signals["outcome"] == "OPENED"].iloc[0]
-    assert opened["weighted_confidence"] is not None and 0.6 < opened["weighted_confidence"] < 0.65
+    # bonus-only con sentiment neutro: pesata = confidenza del modello (0.9)
+    assert opened["weighted_confidence"] is not None and abs(opened["weighted_confidence"] - 0.9) < 1e-9
 
 
 def test_reverse_is_recorded_as_reversed(monkeypatch, tmp_path):

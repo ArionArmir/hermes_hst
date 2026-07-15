@@ -694,12 +694,17 @@ class TradingEngine:
                                     detail=f"sentiment {asset_sentiment:+.2f}")
                 return
 
-            # Il sentiment contribuisce alla confidenza solo se FAVOREVOLE
-            # alla direzione: il vecchio abs() aumentava la confidenza anche
-            # con sentiment opposto al trade (docs/IMPROVEMENT_PLAN.md, S4).
-            weighted_confidence = (
-                (1 - self.sentiment_weight) * signal.confidence
-                + self.sentiment_weight * max(0.0, directional_sentiment)
+            # Sentiment come BONUS-ONLY: con sentiment neutro la confidenza
+            # resta quella del modello. La vecchia media pesata (0.7×conf)
+            # penalizzava del 30% ogni segnale con sentiment neutro, creando
+            # un secondo gate nascosto: soglia policy 0.60 + gate engine 0.55
+            # → soglia effettiva P ≥ 0.786 senza che nessun parametro lo
+            # dicesse. Ora la soglia in config è l'unico regolatore (la usa
+            # anche l'inference) e questo gate scatta solo se le config dei
+            # due processi divergono.
+            weighted_confidence = min(
+                1.0,
+                signal.confidence + self.sentiment_weight * max(0.0, directional_sentiment),
             )
 
             if weighted_confidence < self.ml_confidence_threshold:

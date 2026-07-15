@@ -34,6 +34,7 @@ import pandas as pd
 from src.shared.features import compute_features, MIN_CANDLES
 from src.shared.signal_policy import signal_from_proba, SIGNAL_PROB_THRESHOLD
 from src.training.feature_engine import TARGET_DOWN, TARGET_UP
+from src.exit_model.atr_exit import ATRExitModel
 from src.exit_model.profiles import build_exit_model
 from src.volume_pattern import VolumePatternAnalyzer
 
@@ -53,6 +54,10 @@ class BacktestParams:
     prob_threshold: float = SIGNAL_PROB_THRESHOLD
     pattern_confirmation: bool = True
     reverse_trading: bool = True
+    # None → profili per-simbolo (src/exit_model/profiles.py); un valore →
+    # moltiplicatore uniforme per tutti i simboli (usato dalla taratura)
+    atr_multiplier_sl: Optional[float] = None
+    atr_multiplier_tp: Optional[float] = None
 
 
 @dataclass
@@ -111,7 +116,11 @@ def backtest_symbol(model, candles: pd.DataFrame, symbol: str,
     if valid_mask.any():
         proba[valid_mask.values] = model.predict_proba(features[valid_mask])
 
-    exit_model = build_exit_model(symbol)
+    if params.atr_multiplier_sl is not None and params.atr_multiplier_tp is not None:
+        exit_model = ATRExitModel(atr_multiplier_sl=params.atr_multiplier_sl,
+                                  atr_multiplier_tp=params.atr_multiplier_tp)
+    else:
+        exit_model = build_exit_model(symbol)
     pattern_model = VolumePatternAnalyzer(window=10)
 
     capital = params.initial_capital

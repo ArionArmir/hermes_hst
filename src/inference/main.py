@@ -198,8 +198,11 @@ class MLInference:
     def _signal_from_proba(self, proba) -> tuple:
         """Delega alla policy condivisa con il backtester
         (src/shared/signal_policy.py): live e simulazione devono decidere
-        con la stessa identica regola."""
-        return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP])
+        con la stessa identica regola. La soglia viene dalla config
+        (ml_confidence_threshold): è L'UNICO regolatore di selettività del
+        sistema, tarabile da dashboard e dal backtester."""
+        threshold = self.config.ml_confidence_threshold if self.config else SIGNAL_PROB_THRESHOLD
+        return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP], threshold=threshold)
 
     async def _inference_loop(self):
         while self.running:
