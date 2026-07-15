@@ -1,6 +1,6 @@
 # Deployment
 
-> **Stato attuale**: il repository non include ancora artefatti di deployment "pronti" (nessun `Dockerfile`, nessun unit file `systemd`). Questo documento descrive come portare in produzione l'architettura esistente (3 processi Python + Redis + dashboard Streamlit) usando gli strumenti già presenti (`start.sh`, `dashboard/utils/process_manager.py`) e alcune raccomandazioni per renderla più robusta in esecuzione continua.
+> **Stato attuale**: il repository include le unit systemd **utente** in `deploy/systemd/` (engine, inference, sentiment, dashboard) con installer `deploy/install_systemd.sh` — niente sudo per start/stop quotidiani, riavvio automatico su crash, e `dashboard/utils/process_manager.py` le usa automaticamente quando installate (fallback su `start.sh` altrimenti). Su WSL2 richiedono `systemd=true` nella sezione `[boot]` di `/etc/wsl.conf` + `wsl --shutdown`; per l'avvio al boot senza login: `sudo loginctl enable-linger <utente>`. Manca ancora il `Dockerfile` (fase successiva del piano). L'esempio di unit di sistema qui sotto resta valido per un server multi-utente amministrato da root.
 
 ## Indice
 

@@ -1,6 +1,14 @@
 """
-Avvio/arresto/stato dei processi del bot (engine, inference, sentiment) via subprocess + PID file.
-Riusa start.sh (già indurito con lo stale-kill) invece di duplicarne la logica.
+Avvio/arresto/stato dei processi del bot (engine, inference, sentiment).
+
+Due backend, scelti automaticamente:
+- systemd utente (unit hermes-* installate da deploy/install_systemd.sh):
+  start/stop via `systemctl --user`, riavvio automatico su crash incluso;
+- legacy: subprocess + start.sh (già indurito con lo stale-kill), per gli
+  ambienti senza systemd (es. WSL2 senza systemd=true in wsl.conf).
+
+status() e tail_log() sono comuni: lo stato si legge dai processi vivi
+(pgrep-like) e i log dai file loguru, chiunque abbia avviato il servizio.
 """
 import os
 import subprocess
@@ -20,11 +28,40 @@ MODULES = {
     "sentiment": "src.sentiment.ollama_client",
 }
 
+UNITS = {
+    "engine": "hermes-engine.service",
+    "inference": "hermes-inference.service",
+    "sentiment": "hermes-sentiment.service",
+}
+
 LOG_PREFIX = {
     "engine": "trading",
     "inference": "inference",
     "sentiment": "sentiment",
 }
+
+
+def systemd_ready(service: str = "engine") -> bool:
+    """True se systemd è attivo E la unit utente del servizio è installata:
+    solo allora start/stop passano da systemctl --user."""
+    if not Path("/run/systemd/system").is_dir():
+        return False
+    unit = UNITS.get(service)
+    if unit is None:
+        return False
+    return (Path.home() / ".config" / "systemd" / "user" / unit).exists()
+
+
+def _systemctl(action: str, service: str) -> tuple[bool, str]:
+    unit = UNITS[service]
+    result = subprocess.run(
+        ["systemctl", "--user", action, unit],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode == 0:
+        verb = "Avviato" if action == "start" else "Fermato"
+        return True, f"{verb} via systemd ({unit})"
+    return False, f"systemctl {action} {unit} fallito: {result.stderr.strip() or result.stdout.strip()}"
 
 
 def _pid_file(service: str) -> Path:
@@ -49,6 +86,9 @@ def start(service: str) -> tuple[bool, str]:
     running = _find_running_pids(service)
     if running:
         return False, f"Già in esecuzione (PID {running})"
+
+    if systemd_ready(service):
+        return _systemctl("start", service)
 
     PID_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -75,6 +115,11 @@ def stop(service: str, timeout: float = 8.0) -> tuple[bool, str]:
     if not pids:
         _pid_file(service).unlink(missing_ok=True)
         return False, "Nessun processo in esecuzione"
+
+    if systemd_ready(service):
+        # systemctl stop, non kill diretto: altrimenti Restart=always
+        # farebbe ripartire subito il processo appena terminato
+        return _systemctl("stop", service)
 
     for pid in pids:
         try:

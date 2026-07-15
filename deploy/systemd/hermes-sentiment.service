@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes HFT - Sentiment (Ollama)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python -m src.sentiment.ollama_client
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

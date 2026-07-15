@@ -1,0 +1,17 @@
+# La dashboard resta su localhost (nessun --server.address 0.0.0.0: può
+# modificare config e chiudere posizioni — accesso remoto solo via tunnel SSH,
+# vedi docs/DEPLOYMENT.md).
+[Unit]
+Description=Hermes HFT - Dashboard Streamlit
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/streamlit run dashboard/app.py --server.headless true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

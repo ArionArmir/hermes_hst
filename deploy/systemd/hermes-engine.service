@@ -1,0 +1,20 @@
+# Unit UTENTE (systemctl --user): niente sudo per start/stop quotidiani,
+# così dashboard e watchdog possono gestire i processi senza password.
+# Installazione: deploy/install_systemd.sh. Avvio al boot senza login:
+# sudo loginctl enable-linger <utente> (una volta sola).
+[Unit]
+Description=Hermes HFT - Trading Engine
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python -m src.engine.main
+Restart=always
+RestartSec=5
+# Stesso pinning di start.sh (taskset -c 0,1)
+CPUAffinity=0 1
+
+[Install]
+WantedBy=default.target
