@@ -23,6 +23,7 @@ from src.shared.redis_client import RedisClient
 from src.shared.notifier import notifier
 from src.shared.json_encoder import to_json
 from src.shared.candle_feed import CandleFeed
+from src.shared import store
 from src.exit_model import ATRExitModel
 from src.exit_model.profiles import build_exit_model as _build_exit_model
 from src.volume_pattern import VolumePatternAnalyzer
@@ -368,10 +369,12 @@ class TradingEngine:
                 await self._close_position(symbol, reason="TAKE_PROFIT", price=price)
                 return
 
-    async def _open_position(self, signal: Signal):
+    async def _open_position(self, signal: Signal, weighted_confidence: float = None,
+                             opened_outcome: str = "OPENED"):
         symbol = signal.symbol
         if symbol in self.positions and self.positions[symbol].is_open:
             logger.warning(f"⚠️ Posizione già aperta su {symbol}")
+            self._record_signal(signal, "ALREADY_OPEN", weighted_confidence)
             return
 
         price = self.latest_prices.get(symbol, 0)
@@ -379,6 +382,7 @@ class TradingEngine:
             price = await self._get_price_rest(symbol)
             if price <= 0:
                 logger.warning(f"⚠️ Prezzo non disponibile per {symbol}")
+                self._record_signal(signal, "NO_PRICE", weighted_confidence)
                 return
 
         exit_model = self.exit_models.get(symbol)
@@ -390,6 +394,8 @@ class TradingEngine:
                 pattern_result = pattern_model.analyze()
                 if pattern_result["signal"] == "REJECT":
                     logger.warning(f"⛔ Segnale rifiutato da Pattern Analyzer: {pattern_result['reason']}")
+                    self._record_signal(signal, "PATTERN_REJECT", weighted_confidence,
+                                        detail=pattern_result["reason"])
                     return
                 elif pattern_result["signal"] == "NEUTRAL":
                     logger.info(f"ℹ️ Pattern neutro: {pattern_result['reason']}")
@@ -398,6 +404,7 @@ class TradingEngine:
         position_size = min(self.max_position_usdt * leverage, self.capital * self.max_exposure)
         if position_size <= 0:
             logger.warning("⚠️ Capitale insufficiente per aprire posizione")
+            self._record_signal(signal, "NO_CAPITAL", weighted_confidence)
             return
 
         # Cap a livello PORTAFOGLIO: il sizing per-simbolo da solo permetteva
@@ -412,6 +419,8 @@ class TradingEngine:
                 f"{margin_required:.2f} > {margin_cap:.2f} USDT ({self.max_exposure:.0%} di {self.capital:.2f}) "
                 f"→ {symbol} non aperto"
             )
+            self._record_signal(signal, "EXPOSURE_CAP", weighted_confidence,
+                                detail=f"margine {margin_in_use:.0f}+{margin_required:.0f} > cap {margin_cap:.0f}")
             return
 
         quantity = position_size / price
@@ -445,6 +454,8 @@ class TradingEngine:
         await self._save_positions_to_redis()
 
         logger.info(f"🚀 Posizione APERTA: {symbol} {side} {quantity:.4f} @ {price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f}")
+        self._record_signal(signal, opened_outcome, weighted_confidence,
+                            detail=f"{side} {quantity:.4f} @ {price:.4f}")
         notifier.notify_position_opened(symbol, side, price, quantity, stop_loss, take_profit)
 
     async def _close_position(self, symbol: str, reason: str = "MANUAL", price: float = None):
@@ -487,28 +498,33 @@ class TradingEngine:
 
     def _save_trade_to_file(self, symbol: str, side: str, entry: float, exit_price: float, pnl: float, reason: str,
                             pnl_gross: float = None, fees: float = 0.0):
-        import pandas as pd
         import os
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        # SQLite: fonte di verità interrogabile (dashboard, analisi)
+        try:
+            store.insert_trade(
+                symbol=symbol, side=side, entry=entry, exit_price=exit_price,
+                pnl=pnl, reason=reason, pnl_gross=pnl_gross, fees=fees,
+                capital_after=self.capital, timestamp=timestamp,
+            )
+        except Exception as e:
+            logger.error(f"❌ Persistenza trade su SQLite fallita: {e}")
+
+        # Export CSV in append puro (il vecchio leggi-tutto+riscrivi era
+        # O(n²) e corruttibile se il processo moriva a metà scrittura),
+        # mantenuto per verify_overnight e compatibilità
         filename = "data/trades_history.csv"
-        new_row = pd.DataFrame([{
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'symbol': symbol,
-            'side': side,
-            'entry': entry,
-            'exit': exit_price,
-            'pnl': pnl,
-            'reason': reason,
-            'pnl_gross': pnl_gross if pnl_gross is not None else pnl,
-            'fees': fees,
-            'capital_after': self.capital
-        }])
-        os.makedirs("data", exist_ok=True)
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            df = pd.read_csv(filename)
-            df = pd.concat([df, new_row], ignore_index=True)
-        else:
-            df = new_row
-        df.to_csv(filename, index=False)
+        try:
+            os.makedirs("data", exist_ok=True)
+            is_new = not os.path.exists(filename) or os.path.getsize(filename) == 0
+            with open(filename, "a") as f:
+                if is_new:
+                    f.write("timestamp,symbol,side,entry,exit,pnl,reason,pnl_gross,fees,capital_after\n")
+                f.write(f"{timestamp},{symbol},{side},{entry},{exit_price},{pnl},{reason},"
+                        f"{pnl_gross if pnl_gross is not None else pnl},{fees},{self.capital}\n")
+        except Exception as e:
+            logger.error(f"❌ Scrittura CSV trade fallita: {e}")
 
     async def _place_limit_order(self, symbol: str, side: str, quantity: float, price: float) -> bool:
         logger.info(f"📊 ORDINE LIMITE: {side.upper()} {quantity:.4f} {symbol} @ {price:.2f}")
@@ -606,6 +622,21 @@ class TradingEngine:
                 await asyncio.sleep(5)
                 asyncio.create_task(self._redis_listener())
 
+    def _record_signal(self, signal: Signal, outcome: str,
+                       weighted_confidence: float = None, detail: str = ""):
+        """Registra ogni decisione su un segnale nella tabella SQLite
+        `signals` (anche gli scarti e il perché): è la risposta a "perché il
+        bot non sta tradando?" senza grep nei log. MAI bloccante: un errore
+        di persistenza non deve fermare il trading."""
+        try:
+            store.insert_signal(
+                symbol=signal.symbol, action=signal.action, outcome=outcome,
+                confidence=signal.confidence, weighted_confidence=weighted_confidence,
+                detail=detail,
+            )
+        except Exception as e:
+            logger.error(f"❌ Persistenza segnale fallita: {e}")
+
     def _on_sentiment_asset(self, payload: str):
         """Mappa dinamica asset→simbolo ({'BTC': 0.2, …} → {'BTCUSDT': 0.2}):
         qualunque asset pubblicato dal processo sentiment viene usato, niente
@@ -626,6 +657,7 @@ class TradingEngine:
 
         if signal.source == 'ml':
             if signal.action == 'close':
+                self._record_signal(signal, "CLOSE")
                 await self._close_position(signal.symbol, reason="ML_SIGNAL")
                 return
 
@@ -641,6 +673,8 @@ class TradingEngine:
                     f"⚠️ Sentiment fortemente contrario ({asset_sentiment:+.2f}) per {signal.symbol} "
                     f"→ segnale {signal.action.upper()} filtrato"
                 )
+                self._record_signal(signal, "SENTIMENT_VETO",
+                                    detail=f"sentiment {asset_sentiment:+.2f}")
                 return
 
             # Il sentiment contribuisce alla confidenza solo se FAVOREVOLE
@@ -653,6 +687,8 @@ class TradingEngine:
 
             if weighted_confidence < self.ml_confidence_threshold:
                 logger.info(f"ℹ️ Confidenza bassa ({weighted_confidence:.2f}) → segnale ignorato")
+                self._record_signal(signal, "LOW_CONFIDENCE", weighted_confidence,
+                                    detail=f"soglia {self.ml_confidence_threshold}")
                 return
 
             now = datetime.now(timezone.utc)
@@ -672,6 +708,8 @@ class TradingEngine:
                             f"⏳ Cooldown ri-ingresso {signal.symbol}: chiuso {minutes_since_close:.1f} min fa "
                             f"(< {self.entry_cooldown_minutes} min) → segnale ignorato"
                         )
+                        self._record_signal(signal, "ENTRY_COOLDOWN", weighted_confidence,
+                                            detail=f"chiuso {minutes_since_close:.1f} min fa")
                         return
 
             # --- REVERSE TRADING (con cooldown e isteresi) ---
@@ -686,6 +724,8 @@ class TradingEngine:
                             f"⏳ Reverse ignorato per {signal.symbol}: posizione aperta da "
                             f"{held_minutes:.1f} min (< {self.reverse_cooldown_minutes} min)"
                         )
+                        self._record_signal(signal, "REVERSE_COOLDOWN", weighted_confidence,
+                                            detail=f"posizione aperta da {held_minutes:.1f} min")
                         return
                     # Isteresi: per INVERTIRE serve più convinzione che per
                     # entrare, altrimenti prob oscillanti intorno alla soglia
@@ -696,13 +736,24 @@ class TradingEngine:
                             f"⏳ Reverse ignorato per {signal.symbol}: confidenza {weighted_confidence:.2f} "
                             f"sotto la soglia con isteresi ({reverse_threshold:.2f})"
                         )
+                        self._record_signal(signal, "REVERSE_HYSTERESIS", weighted_confidence,
+                                            detail=f"soglia con isteresi {reverse_threshold:.2f}")
                         return
                     logger.info(f"🔄 Reverse trading: chiusura posizione {signal.symbol} {current_pos.side} per segnale opposto")
                     await self._close_position(signal.symbol, reason="REVERSE_SIGNAL")
                     await asyncio.sleep(0.5)
+                    did_reverse = True
+                else:
+                    did_reverse = False
+            else:
+                did_reverse = False
 
             if signal.action in ('buy', 'sell'):
-                await self._open_position(signal)
+                await self._open_position(
+                    signal,
+                    weighted_confidence=weighted_confidence,
+                    opened_outcome="REVERSED" if did_reverse else "OPENED",
+                )
 
     def stop(self):
         self.running = False

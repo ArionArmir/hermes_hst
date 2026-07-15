@@ -6,10 +6,10 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.shared.redis_client import RedisClient
+from src.shared import store
 from data_engine.news_fetcher import NewsFetcher
 
 class OllamaSentiment:
@@ -131,7 +131,7 @@ Non aggiungere altro testo, solo il JSON.
                 logger.info(f"🧠 Sentiment calcolato: {summary} | aggregate={scores.get('aggregate', 0):+.2f}")
 
                 aggregate_score = scores.get('aggregate', 0.0)
-                self._save_sentiment(aggregate_score)
+                self._save_sentiment(scores)
                 await self.redis.set('sentiment_score', str(aggregate_score))
                 await self.redis.publish('sentiment_update', str(aggregate_score))
 
@@ -148,17 +148,28 @@ Non aggiungere altro testo, solo il JSON.
             logger.info(f"⏳ Prossimo ciclo tra 5 minuti...")
             await asyncio.sleep(300)
 
-    def _save_sentiment(self, score: float):
+    def _save_sentiment(self, scores: dict):
+        """SQLite (una riga per asset, aggregate incluso) + CSV append-only
+        del solo aggregate, compatibile col formato storico. Il vecchio
+        pattern leggi-tutto+riscrivi era O(n²) e corruttibile."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        try:
+            store.insert_sentiment(scores, timestamp=timestamp)
+        except Exception as e:
+            logger.error(f"❌ Persistenza sentiment su SQLite fallita: {e}")
+
+        aggregate = scores.get("aggregate", 0.0)
         filename = "data/sentiment_history.csv"
-        new_row = pd.DataFrame([{"timestamp": datetime.now(timezone.utc).isoformat(), "score": score}])
-        os.makedirs("data", exist_ok=True)
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            df = pd.read_csv(filename)
-            df = pd.concat([df, new_row], ignore_index=True)
-        else:
-            df = new_row
-        df.to_csv(filename, index=False)
-        logger.debug(f"💾 Sentiment salvato: {score:.2f}")
+        try:
+            os.makedirs("data", exist_ok=True)
+            is_new = not os.path.exists(filename) or os.path.getsize(filename) == 0
+            with open(filename, "a") as f:
+                if is_new:
+                    f.write("timestamp,score\n")
+                f.write(f"{timestamp},{aggregate}\n")
+        except Exception as e:
+            logger.error(f"❌ Scrittura CSV sentiment fallita: {e}")
+        logger.debug(f"💾 Sentiment salvato: aggregate {aggregate:+.2f}, {len(scores)} righe")
 
     def stop(self):
         self.running = False
