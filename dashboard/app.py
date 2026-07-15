@@ -12,7 +12,15 @@ for _path in (_DASHBOARD_DIR, _REPO_ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+import pandas as pd
 import streamlit as st
+
+# Difesa in profondità contro i segfault pyarrow visti al cambio tab/pagina:
+# la causa vera era pyarrow 25 (ora pinnato a 22 in requirements.txt), ma le
+# stringhe arrow-backed di pandas 3 erano uno dei punti di crash e per i
+# piccoli DataFrame della dashboard lo storage "python" è identico. Vale solo
+# per questo processo; engine/inference non sono toccati.
+pd.set_option("mode.string_storage", "python")
 
 st.set_page_config(page_title="Hermes Dashboard", layout="wide", page_icon=":material/monitoring:")
 
