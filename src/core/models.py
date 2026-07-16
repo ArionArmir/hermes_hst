@@ -4,7 +4,6 @@ Modelli dati per Project Hermes HFT
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime, timezone
-from decimal import Decimal
 
 class Position(BaseModel):
     symbol: str
@@ -65,9 +64,6 @@ class Config(BaseModel):
     # Fee taker Binance Futures (0,05% per lato), simulate a ogni chiusura
     # per un PnL paper realistico.
     taker_fee_pct: float = Field(0.0005, ge=0, le=0.05)
-    min_volatility_threshold: float = Field(0.001, ge=0)
-    max_volatility_threshold: float = Field(0.02, ge=0)
-    volatility_adjustment: bool = True
     symbols: list[str] = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     # Deve coincidere con il timeframe delle candele di training
     # (train_all_models.py): l'inference lo usa per scaricare le candele su
@@ -75,7 +71,6 @@ class Config(BaseModel):
     timeframe: str = '1h'
     ml_confidence_threshold: float = Field(0.55, gt=0, lt=1.0)
     sentiment_weight: float = Field(0.3, ge=0, le=1.0)
-    sentiment_asset_enabled: bool = True
     reverse_trading_enabled: bool = True
     # Anti flip-flop (docs/IMPROVEMENT_PLAN.md, S3). Le feature cambiano solo
     # alla chiusura di ogni candela: senza cooldown lo stesso segnale

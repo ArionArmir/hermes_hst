@@ -46,7 +46,6 @@ class TradingEngine:
         self.sentiment_score: float = 0.0
         self.sentiment_by_asset: Dict[str, float] = {}
         self.capital: float = 1000.0
-        self.open_orders: Dict[str, dict] = {}
 
         self.config: Optional[Config] = None
         self.config_version: int = 0
@@ -69,8 +68,6 @@ class TradingEngine:
         self.taker_fee_pct = 0.0005
         self.ml_confidence_threshold = 0.55
         self.sentiment_weight = 0.3
-
-        self._executed_trades = []
 
         # --- MODELLI (uno per simbolo) ---
         self.exit_models: Dict[str, ATRExitModel] = {
@@ -580,15 +577,6 @@ class TradingEngine:
                         f"{pnl_gross if pnl_gross is not None else pnl},{fees},{self.capital}\n")
         except Exception as e:
             logger.error(f"❌ Scrittura CSV trade fallita: {e}")
-
-    async def _place_limit_order(self, symbol: str, side: str, quantity: float, price: float) -> bool:
-        logger.info(f"📊 ORDINE LIMITE: {side.upper()} {quantity:.4f} {symbol} @ {price:.2f}")
-        return True
-
-    async def _place_close_order(self, symbol: str, side: str, quantity: float) -> bool:
-        close_side = 'SELL' if side == 'long' else 'BUY'
-        logger.info(f"📊 ORDINE CHIUSURA: {close_side} {quantity:.4f} {symbol}")
-        return True
 
     async def _position_monitor(self):
         while self.running:

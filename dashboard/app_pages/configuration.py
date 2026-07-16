@@ -46,23 +46,11 @@ with st.form("trading_config_form"):
             "Durata massima posizione (minuti)", min_value=1, value=defaults.max_holding_minutes, step=5
         )
     with col2:
-        min_volatility_threshold = st.number_input(
-            "Soglia volatilità minima", min_value=0.0, value=defaults.min_volatility_threshold, format="%.4f"
-        )
-        max_volatility_threshold = st.number_input(
-            "Soglia volatilità massima", min_value=0.0, value=defaults.max_volatility_threshold, format="%.4f"
-        )
-        volatility_adjustment = st.checkbox(
-            "Aggiustamento volatilità", value=defaults.volatility_adjustment
-        )
         ml_confidence_threshold = st.number_input(
             "Soglia confidenza ML", min_value=0.0, max_value=1.0, value=defaults.ml_confidence_threshold, format="%.2f"
         )
         sentiment_weight = st.number_input(
             "Peso sentiment", min_value=0.0, max_value=1.0, value=defaults.sentiment_weight, format="%.2f"
-        )
-        sentiment_asset_enabled = st.checkbox(
-            "Sentiment per asset attivo", value=defaults.sentiment_asset_enabled
         )
 
     symbols_text = st.text_input("Simboli (separati da virgola)", value=", ".join(defaults.symbols))
@@ -90,14 +78,10 @@ if submitted:
         trailing_stop_pct=trailing_stop_pct,
         max_exposure=max_exposure,
         max_holding_minutes=int(max_holding_minutes),
-        min_volatility_threshold=min_volatility_threshold,
-        max_volatility_threshold=max_volatility_threshold,
-        volatility_adjustment=volatility_adjustment,
         symbols=[s.strip().upper() for s in symbols_text.split(",") if s.strip()],
         timeframe=timeframe,
         ml_confidence_threshold=ml_confidence_threshold,
         sentiment_weight=sentiment_weight,
-        sentiment_asset_enabled=sentiment_asset_enabled,
         reverse_trading_enabled=reverse_trading_enabled,
         pattern_confirmation_enabled=pattern_confirmation_enabled,
         dynamic_exit_enabled=dynamic_exit_enabled,
