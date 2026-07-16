@@ -1,0 +1,43 @@
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "filtri": "tutti", "sl": 3.0, "tp": 3.0}, "risultato": {"pnl_totale": -8.43, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "pattern": false}, "risultato": {"pnl_totale": 32.11, "n_trade": 283, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "circuit_breaker": false}, "risultato": {"pnl_totale": 95.11, "n_trade": 333, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "cap_direzionale": false}, "risultato": {"pnl_totale": -32.82, "n_trade": 256, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "reverse": false}, "risultato": {"pnl_totale": -8.43, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "filtri": "nessuno"}, "risultato": {"pnl_totale": 135.25, "n_trade": 409, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 2.0}, "risultato": {"pnl_totale": 26.17, "n_trade": 259, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 5.0}, "risultato": {"pnl_totale": -9.73, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 8.0}, "risultato": {"pnl_totale": -9.73, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 20.0}, "risultato": {"pnl_totale": -9.73, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "tp": 2.0}, "risultato": {"pnl_totale": -10.65, "n_trade": 259, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "tp": 5.0}, "risultato": {"pnl_totale": -6.78, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "tp": 8.0}, "risultato": {"pnl_totale": -6.78, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "tp": 20.0}, "risultato": {"pnl_totale": -6.78, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 20.0, "tp": 20.0}, "risultato": {"pnl_totale": -8.08, "n_trade": 257, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.45}, "risultato": {"pnl_totale": -223.81, "n_trade": 2319, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.48}, "risultato": {"pnl_totale": 172.11, "n_trade": 1281, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5}, "risultato": {"pnl_totale": 244.65, "n_trade": 880, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.52}, "risultato": {"pnl_totale": 208.56, "n_trade": 543, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.6}, "risultato": {"pnl_totale": 6.9, "n_trade": 90, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.45, "sl": 20.0, "tp": 20.0, "filtri": "nessuno"}, "risultato": {"pnl_totale": -262.78, "n_trade": 4461, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "sl": 20.0, "tp": 20.0, "filtri": "nessuno"}, "risultato": {"pnl_totale": 262.95, "n_trade": 1421, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "sl": 20.0, "tp": 20.0, "filtri": "nessuno"}, "risultato": {"pnl_totale": 138.2, "n_trade": 409, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.46, "pattern": true}, "risultato": {"pnl_totale": -180.8, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.46, "pattern": false}, "risultato": {"pnl_totale": -73.93, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.48, "pattern": false}, "risultato": {"pnl_totale": 109.88, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "pattern": false}, "risultato": {"pnl_totale": 122.28, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.52, "pattern": false}, "risultato": {"pnl_totale": 148.97, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.54, "pattern": true}, "risultato": {"pnl_totale": 52.91, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.54, "pattern": false}, "risultato": {"pnl_totale": 70.13, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.56, "pattern": true}, "risultato": {"pnl_totale": 11.23, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.56, "pattern": false}, "risultato": {"pnl_totale": 13.86, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "n_fold": 6}, "risultato": {"pnl_totale": 106.88, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.55, "n_fold": 6}, "risultato": {"pnl_totale": 19.33, "n_trade": null, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "BTCUSDT"}, "risultato": {"pnl_totale": 23.2, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "ETHUSDT"}, "risultato": {"pnl_totale": 221.37, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "SOLUSDT"}, "risultato": {"pnl_totale": 20.86, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "TRXUSDT"}, "risultato": {"pnl_totale": 215.24, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "DOGEUSDT"}, "risultato": {"pnl_totale": 49.7, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "BNBUSDT"}, "risultato": {"pnl_totale": 1.82, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "parametri_trading_5.8y_wf4fold", "config": {"soglia": 0.5, "leave_one_out": "XRPUSDT"}, "risultato": {"pnl_totale": 74.45, "fonte": "2026-07-16"}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "order_flow_prereg", "config": {"flow": false, "soglia": 0.55}, "risultato": {"pnl_totale": 3.06}}
+{"quando": "2026-07-16T19:35:11", "ipotesi": "order_flow_prereg", "config": {"flow": true, "soglia": 0.55}, "risultato": {"pnl_totale": -8.43}}
