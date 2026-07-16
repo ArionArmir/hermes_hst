@@ -9,6 +9,7 @@ import redis
 from src.training.feature_engine import prepare_train_data
 from src.training.model_fit import fit_model
 from src.backtest import BacktestParams, backtest_joint
+from src.training.promotion import decide_promotion
 
 class Trainer:
     def __init__(self):
@@ -110,14 +111,24 @@ class Trainer:
 
     def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles,
                        backtest_params: BacktestParams = None, challenger_bt=None):
-        """(promuovere?, motivazione). Preferisce il backtest a portafoglio
-        condiviso (backtest_joint: stesso capitale e cap di margine tra
-        simboli, come l'engine live — la promozione deve riflettere lo
-        stesso rischio di correlazione a cui il sistema è davvero esposto,
-        non il PnL ottimistico di simboli simulati indipendentemente).
-        Ripiega sull'accuratezza solo se le candele di validation non sono
-        disponibili o non producono risultati."""
+        """(promuovere?, motivazione). Tre livelli, in ordine di preferenza:
+        1) promozione multi-fold (docs/IMPROVEMENT_PLAN.md, V3/N3): la
+           validation riservata viene divisa in più sotto-finestre non
+           sovrapposte, promuove solo se il challenger vince nella
+           maggioranza E non è peggiore nel fold peggiore di ciascuno — un
+           singolo confronto su ~15-20 trade è rumore statistico (il
+           walk-forward ha mostrato +8/−33 USDT sullo stesso periodo);
+        2) backtest a finestra singola (se lo storico non basta per il
+           multi-fold: dataset piccoli, primi giorni di vita del progetto);
+        3) accuratezza di classificazione (se le candele di validation non
+           sono disponibili o non producono risultati)."""
         if val_candles:
+            verdict_multi = decide_promotion(challenger, champion, val_candles, backtest_params)
+            if verdict_multi is not None:
+                logger.info(f"🔬 Promozione multi-fold — {verdict_multi.reason}")
+                return verdict_multi.promote, verdict_multi.reason
+            logger.warning("⚠️ Storico insufficiente per il multi-fold, ripiego sul backtest a finestra singola")
+
             if challenger_bt is None:
                 challenger_bt = backtest_joint(challenger, val_candles, backtest_params)
             champion_bt = backtest_joint(champion, val_candles, backtest_params)
