@@ -5,6 +5,10 @@ max_position_size_usdt: 50.0
 trailing_stop_pct: 0.015
 # Frazione max del capitale impegnabile come margine (tutte le posizioni)
 max_exposure: 0.5
+# Max posizioni simultanee nella STESSA direzione: con crypto correlate,
+# max_exposure da solo non basta (rischio di ribasso sincrono che chiude
+# in blocco più simboli long/short insieme). Tarato con walk_forward.py.
+max_positions_same_direction: 3
 # Fee taker simulate per lato (0.05% Binance Futures)
 taker_fee_pct: 0.0005
 min_volatility_threshold: 0.001

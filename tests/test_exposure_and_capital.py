@@ -2,6 +2,10 @@
 Rischio a livello portafoglio (docs/IMPROVEMENT_PLAN.md, S5/A5):
 - cap sul margine complessivo: la somma dei margini delle posizioni aperte
   non può superare capital × max_exposure;
+- cap sul NUMERO di posizioni simultanee nella stessa direzione: il cap di
+  margine da solo non basta con crypto correlate (scoperto con
+  walk_forward.py — al sizing configurato, anche 6-7 simboli long insieme
+  restano sotto il cap di margine);
 - capitale paper aggiornato a ogni chiusura con PnL al netto delle fee taker.
 """
 import asyncio
@@ -119,3 +123,65 @@ def test_losing_trade_reduces_capital():
         asyncio.run(engine._close_position("BTCUSDT", reason="TEST"))
 
     assert engine.capital < 995.0  # -5 di PnL lordo, più le fee
+
+
+def _open_long_stub(engine, symbol: str, price: float = 100.0):
+    engine.positions[symbol] = Position(
+        symbol=symbol, side="long", entry_price=price, quantity=1.0,
+        leverage=3, stop_loss=price * 0.9, take_profit=price * 1.2,
+    )
+    engine.latest_prices[symbol] = price
+
+
+def test_direction_cap_blocks_extra_position_same_side():
+    engine = _make_engine()
+    engine.capital = 100_000.0   # margine ampissimo: mai il vincolo attivo
+    engine.max_exposure = 1.0
+    engine.max_positions_same_direction = 2
+    _open_long_stub(engine, "BTCUSDT")
+    _open_long_stub(engine, "ETHUSDT")
+    engine.latest_prices["SOLUSDT"] = 100.0
+    signal = Signal(symbol="SOLUSDT", action="buy", confidence=0.9, source="ml")
+
+    with patch("src.engine.main.notifier"):
+        asyncio.run(engine._open_position(signal))
+
+    # Già 2 long aperte (BTC, ETH) = il cap: la terza (SOL) viene rifiutata
+    assert "SOLUSDT" not in engine.positions
+
+
+def test_direction_cap_does_not_count_opposite_side():
+    engine = _make_engine()
+    engine.capital = 100_000.0
+    engine.max_exposure = 1.0
+    engine.max_positions_same_direction = 2
+    _open_long_stub(engine, "BTCUSDT")
+    engine.positions["ETHUSDT"] = Position(
+        symbol="ETHUSDT", side="short", entry_price=100.0, quantity=1.0,
+        leverage=3, stop_loss=110.0, take_profit=80.0,
+    )
+    engine.latest_prices["ETHUSDT"] = 100.0
+    engine.latest_prices["SOLUSDT"] = 100.0
+    signal = Signal(symbol="SOLUSDT", action="buy", confidence=0.9, source="ml")
+
+    with patch("src.engine.main.notifier"):
+        asyncio.run(engine._open_position(signal))
+
+    # Solo 1 long aperta (BTC): il cap conta per direzione, lo short non incide
+    assert engine.positions["SOLUSDT"].is_open
+
+
+def test_direction_cap_ignores_closed_positions():
+    engine = _make_engine()
+    engine.capital = 100_000.0
+    engine.max_exposure = 1.0
+    engine.max_positions_same_direction = 1
+    _open_long_stub(engine, "BTCUSDT")
+    engine.positions["BTCUSDT"].is_open = False  # chiusa: non deve contare
+    engine.latest_prices["ETHUSDT"] = 100.0
+    signal = Signal(symbol="ETHUSDT", action="buy", confidence=0.9, source="ml")
+
+    with patch("src.engine.main.notifier"):
+        asyncio.run(engine._open_position(signal))
+
+    assert engine.positions["ETHUSDT"].is_open

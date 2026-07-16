@@ -64,6 +64,7 @@ class TradingEngine:
         self.max_position_usdt = 200.0
         self.trailing_stop_pct = 0.015
         self.max_exposure = 0.5
+        self.max_positions_same_direction = 3
         self.taker_fee_pct = 0.0005
         self.ml_confidence_threshold = 0.55
         self.sentiment_weight = 0.3
@@ -143,6 +144,7 @@ class TradingEngine:
         self.max_position_usdt = config.max_position_size_usdt
         self.trailing_stop_pct = config.trailing_stop_pct
         self.max_exposure = config.max_exposure
+        self.max_positions_same_direction = config.max_positions_same_direction
         self.taker_fee_pct = config.taker_fee_pct
         self.symbols = [s.lower() for s in config.symbols]
         for symbol in self.symbols:
@@ -207,6 +209,9 @@ class TradingEngine:
                 logger.info(f"💰 Capitale caricato da Redis: {self.capital:.2f} USDT")
             except ValueError:
                 logger.warning(f"⚠️ Valore capitale non valido su Redis, resto a {self.capital:.2f}: {value!r}")
+
+    def _count_open_positions(self, side: str) -> int:
+        return sum(1 for pos in self.positions.values() if pos.is_open and pos.side == side)
 
     def _margin_in_use(self) -> float:
         """Margine impegnato dalle posizioni aperte (nozionale/leva), al
@@ -394,6 +399,21 @@ class TradingEngine:
 
         exit_model = self.exit_models.get(symbol)
         side = 'long' if signal.action == 'buy' else 'short'
+
+        # Cap sul NUMERO di posizioni simultanee nella stessa direzione: con
+        # crypto correlate, max_exposure da solo non impedisce che 6-7
+        # simboli aprano tutti long insieme (docs/IMPROVEMENT_PLAN.md,
+        # scoperto con walk_forward.py). Controllato PRIMA del pattern e del
+        # cap di margine: è il vincolo più economico da valutare.
+        same_direction_count = self._count_open_positions(side)
+        if same_direction_count >= self.max_positions_same_direction:
+            logger.warning(
+                f"⛔ Cap direzionale: {same_direction_count} posizioni {side} già aperte "
+                f"(max {self.max_positions_same_direction}) → {symbol} non aperto"
+            )
+            self._record_signal(signal, "DIRECTION_CAP", weighted_confidence,
+                                detail=f"{same_direction_count} posizioni {side} già aperte")
+            return
 
         if self.pattern_confirmation_enabled:
             pattern_model = self.pattern_models.get(symbol)

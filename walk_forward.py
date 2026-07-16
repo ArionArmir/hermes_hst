@@ -93,6 +93,9 @@ def run_fold(raw: Dict[str, pd.DataFrame], train_end: pd.Timestamp, test_end: pd
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--folds", type=int, default=4)
+    parser.add_argument("--direction-cap", type=int, default=None,
+                        help="override di max_positions_same_direction (default: valore in config, "
+                             "0 o negativo per disattivarlo esplicitamente durante la taratura)")
     args = parser.parse_args()
 
     with open(CONFIG_PATH) as f:
@@ -110,6 +113,9 @@ def main():
         logger.error("❌ Nessun dato storico disponibile (lanciare prima train_all_models.py)")
         return
 
+    direction_cap = (args.direction_cap if args.direction_cap is not None
+                     else config.get("max_positions_same_direction"))
+
     boundaries = build_fold_boundaries(raw, args.folds)
     params = BacktestParams(
         max_position_usdt=config.get("max_position_size_usdt", 50.0),
@@ -117,6 +123,7 @@ def main():
         max_exposure=config.get("max_exposure", 0.5),
         taker_fee_pct=config.get("taker_fee_pct", 0.0005),
         prob_threshold=config.get("ml_confidence_threshold", 0.55),
+        max_positions_same_direction=direction_cap,
     )
 
     rows = []

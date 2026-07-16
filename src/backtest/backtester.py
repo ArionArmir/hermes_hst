@@ -26,7 +26,11 @@ Due modalità:
 - backtest_joint: capitale e cap di margine CONDIVISI tra tutti i simboli,
   simulati bar-per-bar in sincrono sullo stesso orologio — la simulazione
   onesta da usare per tarare soglia/ATR (tune_strategy.py) e per il
-  confronto champion/challenger (trainer.py).
+  confronto champion/challenger (trainer.py). Supporta anche il cap sul
+  numero di posizioni simultanee nella stessa direzione
+  (max_positions_same_direction): il cap di margine da solo si è rivelato
+  insufficiente a bloccare aperture correlate simultanee al sizing attuale
+  (walk_forward.py lo dimostra empiricamente).
 
 Semplificazioni note (documentate, non nascoste):
 - niente sentiment (non esiste uno storico di sentiment);
@@ -68,6 +72,9 @@ class BacktestParams:
     # moltiplicatore uniforme per tutti i simboli (usato dalla taratura)
     atr_multiplier_sl: Optional[float] = None
     atr_multiplier_tp: Optional[float] = None
+    # Max posizioni simultanee nella stessa direzione, solo per backtest_joint
+    # (unica modalità con stato condiviso tra simboli). None = nessun cap.
+    max_positions_same_direction: Optional[int] = None
 
 
 @dataclass
@@ -381,6 +388,10 @@ def backtest_joint(model, candles_by_symbol: Dict[str, pd.DataFrame],
 
     def try_open(sym: str, action: str, price: float, bar_by_symbol: dict):
         side = "long" if action == "buy" else "short"
+        if params.max_positions_same_direction is not None:
+            same_direction = sum(1 for p in positions.values() if p.side == side)
+            if same_direction >= params.max_positions_same_direction:
+                return  # cap direzionale raggiunto, come l'engine live
         if params.pattern_confirmation and pattern_models[sym].analyze()["signal"] == "REJECT":
             return
         position_size = min(params.max_position_usdt * params.leverage,

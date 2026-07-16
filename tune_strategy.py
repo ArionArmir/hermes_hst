@@ -62,12 +62,13 @@ def load_candles(days: int = None) -> dict:
     return candles
 
 
-def run_grid(model, candles: dict) -> pd.DataFrame:
+def run_grid(model, candles: dict, direction_cap: int = None) -> pd.DataFrame:
     rows = []
     combos = list(itertools.product(THRESHOLDS, SL_MULTIPLIERS, TP_MULTIPLIERS))
     for i, (threshold, sl, tp) in enumerate(combos, 1):
         params = BacktestParams(prob_threshold=threshold,
-                                atr_multiplier_sl=sl, atr_multiplier_tp=tp)
+                                atr_multiplier_sl=sl, atr_multiplier_tp=tp,
+                                max_positions_same_direction=direction_cap)
         total = backtest_joint(model, candles, params)
         if total is None:
             continue
@@ -104,13 +105,18 @@ def main():
     parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
 
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+    direction_cap = config.get("max_positions_same_direction")
+
     model = joblib.load(args.model)
     candles = load_candles(args.days)
     n_bars = max(len(df) for df in candles.values())
     print(f"griglia {len(THRESHOLDS)}×{len(SL_MULTIPLIERS)}×{len(TP_MULTIPLIERS)} "
-          f"su {len(candles)} simboli × ~{n_bars} candele\n")
+          f"su {len(candles)} simboli × ~{n_bars} candele "
+          f"(cap direzionale: {direction_cap or 'nessuno'})\n")
 
-    results = run_grid(model, candles)
+    results = run_grid(model, candles, direction_cap=direction_cap)
     results.to_csv(RESULTS_PATH, index=False)
 
     valid = results[results["trades"] >= MIN_TRADES].copy()
@@ -132,7 +138,8 @@ def main():
           f"(t={best['threshold']}, SL={best['sl_mult']}, TP={best['tp_mult']}) ===")
     params = BacktestParams(prob_threshold=best["threshold"],
                             atr_multiplier_sl=best["sl_mult"],
-                            atr_multiplier_tp=best["tp_mult"])
+                            atr_multiplier_tp=best["tp_mult"],
+                            max_positions_same_direction=direction_cap)
     result = backtest_joint(model, candles, params)
     for symbol, group in result.trades.groupby("symbol"):
         print(f"  {symbol:10s} trade={len(group):3d}  PnL={group['pnl'].sum():+8.2f}  "

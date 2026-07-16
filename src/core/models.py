@@ -41,6 +41,16 @@ class Config(BaseModel):
     # Frazione massima del capitale impegnabile come margine, sommando TUTTE
     # le posizioni aperte: l'engine rifiuta le aperture oltre questo cap.
     max_exposure: float = 0.5
+    # Numero massimo di posizioni aperte simultaneamente nella STESSA
+    # direzione (long o short), su simboli diversi. Con crypto altamente
+    # correlate, max_exposure da solo non basta: al sizing attuale (~50 USDT
+    # di margine/posizione) restano ampi margini di manovra anche con 6-7
+    # simboli aperti nella stessa direzione — un ribasso sincrono del
+    # mercato li chiude quasi tutti in stop loss insieme (scoperto con
+    # walk_forward.py, docs/IMPROVEMENT_PLAN.md). Tarato a 3 con
+    # walk_forward.py --folds 4: sotto questo valore il fold peggiore
+    # migliora sensibilmente senza sacrificare i fold buoni.
+    max_positions_same_direction: int = 3
     # Fee taker Binance Futures (0,05% per lato), simulate a ogni chiusura
     # per un PnL paper realistico.
     taker_fee_pct: float = 0.0005

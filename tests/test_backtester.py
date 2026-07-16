@@ -202,3 +202,33 @@ def test_joint_returns_none_for_insufficient_common_history():
 
 def test_joint_returns_none_for_empty_input():
     assert backtest_joint(StubModel(lambda i: FLAT), {}) is None
+
+
+def test_direction_cap_limits_simultaneous_same_side_positions():
+    # Margine ampissimo (mai vincolante): SENZA cap direzionale entrambi i
+    # simboli aprirebbero long; con cap=1 solo il primo (ordine di
+    # iterazione del dict) deve restare aperto contemporaneamente.
+    params = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                            max_positions_same_direction=1, pattern_confirmation=False)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    result = backtest_joint(model, candles, params)
+
+    without_cap = backtest_joint(model, candles, BacktestParams(
+        max_exposure=100.0, initial_capital=100_000.0, pattern_confirmation=False))
+
+    assert len(result.trades) < len(without_cap.trades)
+
+
+def test_direction_cap_none_means_uncapped():
+    params_uncapped = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                                     pattern_confirmation=False, max_positions_same_direction=None)
+    params_high_cap = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                                     pattern_confirmation=False, max_positions_same_direction=10)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    r1 = backtest_joint(model, candles, params_uncapped)
+    r2 = backtest_joint(model, candles, params_high_cap)
+    assert len(r1.trades) == len(r2.trades)

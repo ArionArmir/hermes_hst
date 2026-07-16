@@ -60,6 +60,7 @@ def main():
         # Stessa soglia del sistema live: ml_confidence_threshold è l'unico
         # regolatore di selettività (usato da inference e policy)
         prob_threshold=config.get("ml_confidence_threshold", 0.55),
+        max_positions_same_direction=config.get("max_positions_same_direction"),
     )
     results = backtest_portfolio(model, candles_by_symbol, params)
 

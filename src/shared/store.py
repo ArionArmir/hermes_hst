@@ -41,6 +41,7 @@ SIGNAL_OUTCOMES = (
     "NO_PRICE",           # prezzo non disponibile
     "NO_CAPITAL",         # sizing nullo
     "EXPOSURE_CAP",       # cap di margine portafoglio raggiunto
+    "DIRECTION_CAP",      # troppe posizioni già aperte nella stessa direzione
 )
 
 _SCHEMA = """
