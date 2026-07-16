@@ -2,8 +2,11 @@
 """
 Validazione walk-forward: riaddestra il modello (stessa procedura di fit di
 produzione, src/training/model_fit.py) su finestre temporali consecutive a
-orizzonte crescente e valuta ciascuna sul backtest (fee/slippage inclusi),
-con la soglia e i profili ATR correnti da config. Risponde alla domanda che
+orizzonte crescente e valuta ciascuna sul backtest a PORTAFOGLIO CONDIVISO
+(backtest_joint: stesso capitale e stesso cap di margine tra simboli, come
+l'engine live — mai backtest_portfolio, che tratta i simboli come se
+avessero capitale indipendente e nasconde il rischio di correlazione), con
+la soglia e i profili ATR correnti da config. Risponde alla domanda che
 tune_strategy.py da solo non può: i parametri trovati sono buoni su TUTTO lo
 storico o solo sulle finestre già viste durante la taratura?
 
@@ -27,7 +30,7 @@ from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.backtest import BacktestParams, backtest_portfolio
+from src.backtest import BacktestParams, backtest_joint
 from src.data_collector import DataCollector
 from src.shared.features import MIN_CANDLES
 from src.training.feature_engine import prepare_train_data
@@ -84,7 +87,7 @@ def run_fold(raw: Dict[str, pd.DataFrame], train_end: pd.Timestamp, test_end: pd
     model, info = fit_model(X_train, y_train, X_calib, y_calib)
     logger.info(f"  Modello: {info['n_trees']} alberi, calibrato={info['calibrated']}")
 
-    return backtest_portfolio(model, test_candles, params).get("TOTAL")
+    return backtest_joint(model, test_candles, params)
 
 
 def main():

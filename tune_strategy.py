@@ -5,11 +5,19 @@ soglia × SL × TP, metrica = PnL netto (fee e slippage inclusi) sul periodo
 di validation del champion (ultimo 20% delle candele, out-of-sample per il
 modello).
 
+Usa backtest_joint (capitale e cap di margine CONDIVISI tra simboli, come
+l'engine live) e non backtest_portfolio (simboli indipendenti): con crypto
+correlate, simboli che aprono long in blocco competono per lo stesso
+margine — backtest_portfolio non vede questo rischio e sovrastimerebbe il
+PnL di soglie/moltiplicatori troppo permissivi (scoperto con
+walk_forward.py, vedi docs/IMPROVEMENT_PLAN.md).
+
 Regole di lettura dei risultati (anti-overfitting su ~70 giorni):
 - scartare combinazioni con pochi trade (il PnL di 3 trade è rumore);
 - preferire un "altopiano" (vicini di griglia anch'essi buoni) a un picco
   isolato — lo script stampa la media del vicinato per le migliori;
-- la scelta finale va confermata su una finestra diversa (--days).
+- la scelta finale va confermata su una finestra diversa (--days) e sul
+  walk-forward (walk_forward.py).
 
 Uso:
   python tune_strategy.py               # ultimo 20% delle candele
@@ -26,7 +34,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.backtest import BacktestParams, backtest_portfolio
+from src.backtest import BacktestParams, backtest_joint
 from src.data_collector import DataCollector
 from src.shared.features import MIN_CANDLES
 
@@ -60,7 +68,7 @@ def run_grid(model, candles: dict) -> pd.DataFrame:
     for i, (threshold, sl, tp) in enumerate(combos, 1):
         params = BacktestParams(prob_threshold=threshold,
                                 atr_multiplier_sl=sl, atr_multiplier_tp=tp)
-        total = backtest_portfolio(model, candles, params).get("TOTAL")
+        total = backtest_joint(model, candles, params)
         if total is None:
             continue
         rows.append({
@@ -120,14 +128,17 @@ def main():
     print(robust.to_string(index=False))
 
     best = robust.iloc[0]
-    print(f"\n=== dettaglio per simbolo della scelta robusta "
+    print(f"\n=== dettaglio per simbolo (backtest_joint, portafoglio condiviso) della scelta robusta "
           f"(t={best['threshold']}, SL={best['sl_mult']}, TP={best['tp_mult']}) ===")
     params = BacktestParams(prob_threshold=best["threshold"],
                             atr_multiplier_sl=best["sl_mult"],
                             atr_multiplier_tp=best["tp_mult"])
-    for symbol, res in backtest_portfolio(model, candles, params).items():
-        print(f"  {symbol:10s} trade={res.n_trades:3d}  PnL={res.net_pnl:+8.2f}  "
-              f"hit={res.hit_rate:5.1%}  maxDD={res.max_drawdown_pct:6.2%}")
+    result = backtest_joint(model, candles, params)
+    for symbol, group in result.trades.groupby("symbol"):
+        print(f"  {symbol:10s} trade={len(group):3d}  PnL={group['pnl'].sum():+8.2f}  "
+              f"hit={(group['pnl'] > 0).mean():5.1%}")
+    print(f"  {'PORTFOLIO':10s} trade={result.n_trades:3d}  PnL={result.net_pnl:+8.2f}  "
+          f"hit={result.hit_rate:5.1%}  maxDD={result.max_drawdown_pct:6.2%}")
 
 
 if __name__ == "__main__":

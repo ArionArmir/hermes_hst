@@ -8,7 +8,7 @@ from loguru import logger
 import redis
 from src.training.feature_engine import prepare_train_data
 from src.training.model_fit import fit_model
-from src.backtest import backtest_portfolio
+from src.backtest import backtest_joint
 
 class Trainer:
     def __init__(self):
@@ -95,12 +95,16 @@ class Trainer:
         return True
 
     def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles):
-        """(promuovere?, motivazione). Preferisce il backtest; ripiega
-        sull'accuratezza solo se le candele di validation non sono
+        """(promuovere?, motivazione). Preferisce il backtest a portafoglio
+        condiviso (backtest_joint: stesso capitale e cap di margine tra
+        simboli, come l'engine live — la promozione deve riflettere lo
+        stesso rischio di correlazione a cui il sistema è davvero esposto,
+        non il PnL ottimistico di simboli simulati indipendentemente).
+        Ripiega sull'accuratezza solo se le candele di validation non sono
         disponibili o non producono risultati."""
         if val_candles:
-            challenger_bt = backtest_portfolio(challenger, val_candles).get("TOTAL")
-            champion_bt = backtest_portfolio(champion, val_candles).get("TOTAL")
+            challenger_bt = backtest_joint(challenger, val_candles)
+            champion_bt = backtest_joint(champion, val_candles)
             if challenger_bt is not None and champion_bt is not None:
                 logger.info(
                     f"🔬 Backtest validation — challenger: PnL netto {challenger_bt.net_pnl:.2f} USDT "
