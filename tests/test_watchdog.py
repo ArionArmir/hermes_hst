@@ -12,7 +12,15 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from watchdog import check_ollama, evaluate_checks, split_transitions, CHECKS
+from watchdog import (
+    check_model_health,
+    check_ollama,
+    evaluate_checks,
+    split_transitions,
+    CHECKS,
+    MODEL_HEALTH_MIN_TRADES,
+)
+from src.shared import store
 
 NOW = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -114,3 +122,56 @@ def test_ollama_honours_env_host(monkeypatch):
         check_ollama()
 
     assert get.call_args[0][0] == "http://ollama:11434/api/version"
+
+
+# ---------- model-health monitor ----------
+
+class _FakeRedisGet:
+    def __init__(self, values=None):
+        self.values = values or {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+
+def _insert_trades(pnls):
+    for i, pnl in enumerate(pnls):
+        store.insert_trade(symbol="BTCUSDT", side="long", entry=100.0, exit_price=100.0 + pnl,
+                           pnl=pnl, reason="TEST", timestamp=f"2026-07-16T{10 + i:02d}:00:00+00:00")
+
+
+def test_too_few_trades_is_not_judged():
+    _insert_trades([-1.0] * (MODEL_HEALTH_MIN_TRADES - 1))
+    assert check_model_health(_FakeRedisGet()) is None
+
+
+def test_healthy_hit_rate_is_not_a_problem():
+    # 15/20 vincenti: hit rate sano, nessun problema anche senza guardare il PnL
+    _insert_trades([+1.0] * 15 + [-1.0] * 5)
+    assert check_model_health(_FakeRedisGet()) is None
+
+
+def test_low_hit_rate_with_negative_pnl_is_a_problem():
+    _insert_trades([-1.0] * 15 + [+0.5] * 5)  # hit rate 25%, PnL netto -12.5
+    problem = check_model_health(_FakeRedisGet())
+    assert problem is not None
+    assert "25%" in problem
+
+
+def test_low_hit_rate_with_positive_pnl_is_not_flagged():
+    # Poche vincite grandi, molte piccole perdite: hit rate basso ma sano
+    # (riduce i falsi positivi rispetto a guardare solo l'hit rate)
+    _insert_trades([-1.0] * 15 + [+10.0] * 5)
+    assert check_model_health(_FakeRedisGet()) is None
+
+
+def test_problem_message_includes_champion_expectation_when_available():
+    _insert_trades([-1.0] * 15 + [+0.5] * 5)
+    problem = check_model_health(_FakeRedisGet({"champion_hit_rate": "0.75"}))
+    assert "75%" in problem
+
+
+def test_missing_champion_expectation_is_handled_gracefully():
+    _insert_trades([-1.0] * 15 + [+0.5] * 5)
+    problem = check_model_health(_FakeRedisGet({"champion_hit_rate": "not-a-number"}))
+    assert problem is not None  # non deve sollevare, solo omettere il confronto

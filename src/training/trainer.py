@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 import joblib
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
 import redis
 from src.training.feature_engine import prepare_train_data
@@ -70,6 +70,12 @@ class Trainer:
         joblib.dump(model, self.challenger_path)
         logger.info(f"💾 Challenger salvato: {self.challenger_path}")
 
+        # Backtest del CHALLENGER, calcolato una sola volta e riusato sia per
+        # il confronto con il champion sia per pubblicare le metriche attese
+        # se viene promosso (docs/IMPROVEMENT_PLAN.md, V4/N4: il watchdog le
+        # confronta col comportamento live per rilevare un degrado).
+        challenger_bt = backtest_joint(model, val_candles, backtest_params) if val_candles else None
+
         if os.path.exists(self.model_path):
             champion = joblib.load(self.model_path)
             try:
@@ -81,29 +87,29 @@ class Trainer:
                         f"classi champion {list(champion.classes_)} != challenger {list(model.classes_)}"
                     )
                 promote, verdict = self._compare_models(model, champion, X_val, y_val, acc, val_candles,
-                                                        backtest_params)
+                                                        backtest_params, challenger_bt)
             except Exception as e:
                 # Il champion è stato addestrato su un set di feature diverso
                 # (nomi/ordine non compatibili con FEATURE_COLS attuale): non è
                 # confrontabile né utilizzabile in inference, promuovo il
                 # challenger direttamente.
                 logger.warning(f"⚠️ Champion incompatibile con le feature attuali ({e}), promuovo il challenger")
-                self._swap_model()
+                self._swap_model(challenger_bt)
                 logger.info("🏆 Challenger promosso per incompatibilità del champion")
                 return True
             if promote:
-                self._swap_model()
+                self._swap_model(challenger_bt)
                 logger.info(f"🏆 Nuovo champion! ({verdict})")
             else:
                 logger.info(f"ℹ️ Challenger non supera champion ({verdict})")
         else:
-            self._swap_model()
+            self._swap_model(challenger_bt)
             logger.info("🏆 Primo modello champion")
 
         return True
 
     def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles,
-                       backtest_params: BacktestParams = None):
+                       backtest_params: BacktestParams = None, challenger_bt=None):
         """(promuovere?, motivazione). Preferisce il backtest a portafoglio
         condiviso (backtest_joint: stesso capitale e cap di margine tra
         simboli, come l'engine live — la promozione deve riflettere lo
@@ -112,7 +118,8 @@ class Trainer:
         Ripiega sull'accuratezza solo se le candele di validation non sono
         disponibili o non producono risultati."""
         if val_candles:
-            challenger_bt = backtest_joint(challenger, val_candles, backtest_params)
+            if challenger_bt is None:
+                challenger_bt = backtest_joint(challenger, val_candles, backtest_params)
             champion_bt = backtest_joint(champion, val_candles, backtest_params)
             if challenger_bt is not None and champion_bt is not None:
                 logger.info(
@@ -129,11 +136,21 @@ class Trainer:
         champion_acc = accuracy_score(y_val, champion.predict(X_val))
         return challenger_acc > champion_acc, f"accuratezza {challenger_acc:.2%} vs {champion_acc:.2%}"
 
-    def _swap_model(self):
-        """Swap atomico su Redis"""
+    def _swap_model(self, validation_result=None):
+        """Swap atomico su Redis. Se disponibile un BacktestResult di
+        validation del nuovo champion, ne pubblica le metriche attese (hit
+        rate, PnL netto) — il watchdog le confronta col comportamento live
+        recente per rilevare un modello che si degrada gradualmente
+        (docs/IMPROVEMENT_PLAN.md, V4/N4): un evento diverso da una crisi
+        acuta (già coperta dal circuit breaker), non necessariamente
+        abbastanza brusco da far scattare quello."""
         shutil.copy(self.challenger_path, self.model_path)
         self.redis.set('active_model_path', self.model_path)
         self.redis.publish('model_swap', self.model_path)
+        if validation_result is not None:
+            self.redis.set('champion_hit_rate', str(validation_result.hit_rate))
+            self.redis.set('champion_net_pnl', str(validation_result.net_pnl))
+            self.redis.set('champion_promoted_at', datetime.now(timezone.utc).isoformat())
         logger.info("🔄 Modello swapped via Redis")
 
 # Il punto d'ingresso per addestrare su tutti i simboli configurati è

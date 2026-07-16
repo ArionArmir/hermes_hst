@@ -48,6 +48,15 @@ ALERT_STATE_KEY = "watchdog_alerted"
 REDIS_DOWN_MARKER = REPO_ROOT / "logs" / ".watchdog_redis_down"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
+# Model-health monitor (docs/IMPROVEMENT_PLAN.md, V4/N4): finestra di trade
+# recenti su cui giudicare, sotto questa soglia il campione è troppo piccolo
+# per un giudizio statistico. Le soglie assolute sono deliberatamente larghe
+# (un floor sotto il quale qualcosa è chiaramente andato storto), non la
+# taratura fine — quella resta compito di tune_strategy.py/walk_forward.py.
+MODEL_HEALTH_WINDOW = 20
+MODEL_HEALTH_MIN_TRADES = 10
+MODEL_HEALTH_HIT_RATE_FLOOR = 0.30
+
 
 def load_env(path: Path = REPO_ROOT / ".env"):
     """Cron non passa da start.sh: carichiamo .env a mano (serve al Notifier
@@ -101,6 +110,36 @@ def check_ollama(base_url: Optional[str] = None) -> Optional[str]:
         return f"non raggiungibile ({url}): {e.__class__.__name__}"
 
 
+def check_model_health(redis_client) -> Optional[str]:
+    """None se il comportamento recente del modello è nella norma,
+    descrizione del problema altrimenti. Non aziona nulla (il circuit
+    breaker già ferma le nuove aperture in una crisi acuta): rende visibile
+    un degrado GRADUALE che il circuit breaker da solo non intercetta —
+    il fold catastrofico del walk-forward era proprio questo, una sequenza
+    di trade in perdita scoperta solo guardando la dashboard a posteriori."""
+    from src.shared import store
+    trades = store.read_trades(limit=MODEL_HEALTH_WINDOW)
+    if len(trades) < MODEL_HEALTH_MIN_TRADES:
+        return None
+
+    hit_rate = float((trades["pnl"] > 0).mean())
+    net_pnl = float(trades["pnl"].sum())
+    # Combinare le due condizioni riduce i falsi positivi: un hit rate basso
+    # con PnL netto comunque positivo (poche vincite grandi, molte piccole
+    # perdite) può essere una strategia sana, non un modello che decade.
+    if not (hit_rate < MODEL_HEALTH_HIT_RATE_FLOOR and net_pnl < 0):
+        return None
+
+    detail = f"hit rate {hit_rate:.0%} e PnL netto {net_pnl:+.2f} USDT sugli ultimi {len(trades)} trade"
+    expected = redis_client.get("champion_hit_rate")
+    if expected:
+        try:
+            detail += f" (il champion prometteva {float(expected):.0%} in validation)"
+        except ValueError:
+            pass
+    return detail
+
+
 def split_transitions(previously_alerted: Set[str],
                       problems: Dict[str, Optional[str]]) -> Tuple[Dict[str, str], List[str]]:
     """(nuovi problemi da notificare, check rientrati da notificare come
@@ -143,6 +182,7 @@ def main() -> int:
     values = dict(zip(keys, client.mget(keys)))
     problems = evaluate_checks(values, now)
     problems["ollama"] = check_ollama()
+    problems["modello"] = check_model_health(client)
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 
