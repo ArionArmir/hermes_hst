@@ -204,9 +204,20 @@ class MLInference:
         threshold = self.config.ml_confidence_threshold if self.config else SIGNAL_PROB_THRESHOLD
         return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP], threshold=threshold)
 
+    async def _publish_candle_feed_health(self):
+        """Il più vecchio fetch riuscito tra i simboli configurati: se
+        Binance REST è irraggiungibile a lungo, questo smette di aggiornarsi
+        e il watchdog lo segnala MOLTO prima che CandleFeed smetta di
+        servire candele del tutto (docs/IMPROVEMENT_PLAN.md, V2) — un
+        preavviso, non solo lo stop finale."""
+        oldest = self.candle_feed.oldest_last_success([s.upper() for s in self.symbols])
+        if oldest is not None:
+            await self.redis.set('candle_feed_last_success', oldest.isoformat())
+
     async def _inference_loop(self):
         while self.running:
             await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
+            await self._publish_candle_feed_health()
             try:
                 if self.model is None:
                     await asyncio.sleep(1)

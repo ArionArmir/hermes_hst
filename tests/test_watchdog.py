@@ -50,6 +50,19 @@ def test_missing_and_garbage_keys_are_problems():
     assert "illeggibile" in problems["tick engine"]
 
 
+def test_stale_candle_feed_is_detected():
+    # Preavviso indipendente dagli heartbeat: il processo può essere vivo
+    # (heartbeat fresco) e tradare comunque su candele vecchie se Binance
+    # REST è irraggiungibile (docs/IMPROVEMENT_PLAN.md, V2).
+    values = _all_fresh()
+    values["candle_feed_last_success"] = _iso(1000)
+    problems = evaluate_checks(values, NOW)
+
+    assert problems["candele"] is not None
+    assert "1000s" in problems["candele"]
+    assert problems["inference"] is None  # heartbeat separato, resta sano
+
+
 def test_naive_timestamps_are_treated_as_utc():
     values = _all_fresh()
     values["heartbeat_engine"] = (NOW - timedelta(seconds=10)).replace(tzinfo=None).isoformat()

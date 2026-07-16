@@ -31,13 +31,17 @@ sys.path.insert(0, str(REPO_ROOT))
 
 # Soglie in secondi. Heartbeat: engine/inference li scrivono ogni ~5s,
 # sentiment ogni 15s. Tick: su Binance Futures BTC/ETH scambiano di continuo,
-# nessun tick per 3 minuti = WebSocket morto, non mercato fermo.
+# nessun tick per 3 minuti = WebSocket morto, non mercato fermo. Candele:
+# preavviso MOLTO prima del cutoff interno di CandleFeed (2h di default per
+# candele 1h) — un processo vivo (heartbeat OK) può comunque tradare su dati
+# di mercato stantii se Binance REST è irraggiungibile (docs/IMPROVEMENT_PLAN.md, V2).
 CHECKS = {
     "engine": {"key": "heartbeat_engine", "stale_after": 120},
     "inference": {"key": "heartbeat_inference", "stale_after": 120},
     "sentiment": {"key": "heartbeat_sentiment", "stale_after": 120},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},
+    "candele": {"key": "candle_feed_last_success", "stale_after": 900},
 }
 RESTARTABLE = ("engine", "inference", "sentiment")
 ALERT_STATE_KEY = "watchdog_alerted"
