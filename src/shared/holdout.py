@@ -11,7 +11,10 @@ il 2026-07-16 su questi dati (simulazioni 100k in scratchpad).
 
 Un holdout non guardato riporta il valore vero, perché il suo rumore non ha
 partecipato alla scelta. Ma vale UNA CARTUCCIA SOLA: riscegliendo il meglio
-di 6 sull'holdout, un edge vero di 0 si rilegge +156.
+di 6 sull'holdout, un edge vero di 0 si rilegge +156. Per questo è diviso in
+lotti indipendenti: ognuno è un colpo, e quando finiscono non esistono altri
+dati puliti (i 22 simboli già scaricati sono bruciati, e validare in avanti
+costa 5-85 anni di paper trading).
 
 Il modulo fa due cose che a mano non reggono:
  1) impedisce l'accesso accidentale ai dati sigillati durante la ricerca;
@@ -53,9 +56,36 @@ def _manifest() -> dict:
         return yaml.safe_load(f)
 
 
-def sealed_symbols() -> list[str]:
-    """Simboli riservati all'holdout: vietati in qualunque fase di ricerca."""
-    return sorted(_manifest()["simboli"].keys())
+def lots() -> list[str]:
+    """Nomi dei lotti, dal più recente sigillato al primo."""
+    return sorted(_manifest()["lotti"].keys())
+
+
+def lot_status(lotto: str) -> str:
+    """'SIGILLATO' (cartuccia carica) o 'APERTO' (spesa)."""
+    man = _manifest()
+    if lotto not in man["lotti"]:
+        raise HoldoutViolation(f"Lotto inesistente: {lotto}. Disponibili: {lots()}")
+    return man["lotti"][lotto]["stato"]
+
+
+def sealed_lots() -> list[str]:
+    """Lotti ancora spendibili. Vuoto = niente più validazione pulita possibile."""
+    return [l for l in lots() if lot_status(l) == "SIGILLATO"]
+
+
+def sealed_symbols(lotto: str | None = None) -> list[str]:
+    """Simboli dell'holdout: di un lotto, o di tutti.
+
+    Sempre vietati in ricerca, anche quelli di un lotto già aperto: un lotto
+    speso non torna pulito, e usarlo per cercare e poi citarne il risultato
+    come validazione sarebbe riciclaggio.
+    """
+    man = _manifest()
+    nomi = [lotto] if lotto else list(man["lotti"])
+    if lotto and lotto not in man["lotti"]:
+        raise HoldoutViolation(f"Lotto inesistente: {lotto}. Disponibili: {lots()}")
+    return sorted(s for n in nomi for s in man["lotti"][n]["simboli"])
 
 
 def assert_research_allowed(symbols) -> None:
@@ -67,9 +97,9 @@ def assert_research_allowed(symbols) -> None:
     contaminati = sorted(set(symbols) & set(sealed_symbols()))
     if contaminati:
         raise HoldoutViolation(
-            f"Ricerca su simboli SIGILLATI: {contaminati}. "
-            "Sono l'unico holdout pulito rimasto: usarli qui li distrugge. "
-            "Per la validazione finale usare open_seal()."
+            f"Ricerca su simboli dell'HOLDOUT: {contaminati}. "
+            "Sono l'unica fonte pulita rimasta: usarli qui li distrugge. "
+            f"Per la validazione finale usare open_seal(). Lotti carichi: {sealed_lots()}"
         )
 
 
@@ -141,37 +171,46 @@ def deflated_sharpe_ratio(pnl_per_trade, n_trials: int) -> float:
     return float(stats.norm.cdf((sr - sr_atteso_max) * np.sqrt(n - 1) / denom))
 
 
-def open_seal(ipotesi: str, n_trials: int, motivazione: str,
+def open_seal(lotto: str, ipotesi: str, n_trials: int, motivazione: str,
               acknowledge_burned: bool = False) -> dict[str, pd.DataFrame]:
-    """Apre l'holdout per validare UN candidato già congelato. Irreversibile.
+    """Apre UN lotto per validare UN candidato già congelato. Irreversibile.
 
     `n_trials` è il numero di configurazioni provate per arrivare al candidato:
-    serve a deflazionare il risultato. Dichiararlo basso non rende l'edge più
-    reale, rende solo la stima sbagliata.
+    serve a deflazionare il risultato con deflated_sharpe_ratio(). Dichiararlo
+    basso non rende l'edge più reale, rende solo la stima sbagliata — sul
+    candidato del 2026-07-16, dichiarare 1 tentativo invece dei 41 veri
+    trasformava un DSR del 21.4% in 97.3%.
 
-    L'apertura viene registrata nel manifesto e nel registro. Una seconda
-    apertura richiede `acknowledge_burned=True`: non è un lucchetto tecnico —
-    è lì per rendere impossibile farlo per distrazione.
+    L'apertura viene registrata nel manifesto e nel registro. Riaprire un lotto
+    speso richiede `acknowledge_burned=True`: non è un lucchetto tecnico — è lì
+    perché non possa capitare per distrazione.
     """
     man = _manifest()
-    if man.get("stato") != "SIGILLATO" and not acknowledge_burned:
-        aperto = man.get("aperto_da")
+    if lotto not in man["lotti"]:
+        raise HoldoutViolation(f"Lotto inesistente: {lotto}. Disponibili: {lots()}")
+    info = man["lotti"][lotto]
+
+    if info["stato"] != "SIGILLATO" and not acknowledge_burned:
+        carichi = sealed_lots()
         raise HoldoutViolation(
-            f"Holdout GIÀ APERTO da: {aperto}. Il suo valore statistico è "
-            "speso: riusarlo per una seconda selezione lo rende un set di "
-            "ricerca (edge vero 0 -> si legge +156). Servono dati nuovi. "
-            "Per procedere consapevolmente: acknowledge_burned=True."
+            f"Lotto {lotto} GIÀ APERTO da: {info['aperto_da']}. Il suo valore "
+            "statistico è speso: riusarlo per una seconda selezione lo rende un "
+            "set di ricerca (edge vero 0 -> si rilegge +156). "
+            + (f"Usare invece un lotto carico: {carichi}." if carichi else
+               "NESSUN lotto carico rimasto: non esistono più dati puliti, "
+               "servono mesi di paper trading in avanti.")
+            + " Per procedere consapevolmente: acknowledge_burned=True."
         )
 
     dati = {}
-    for sym in man["simboli"]:
+    for sym in info["simboli"]:
         path = HOLDOUT_DIR / f"{sym}_1h.parquet"
         if not path.exists():
             raise HoldoutViolation(f"Dato sigillato mancante: {path}")
         dati[sym] = pd.read_parquet(path)
 
-    man["stato"] = "APERTO"
-    man["aperto_da"] = {
+    info["stato"] = "APERTO"
+    info["aperto_da"] = {
         "quando": datetime.now().isoformat(timespec="seconds"),
         "ipotesi": ipotesi,
         "tentativi_dichiarati": n_trials,
@@ -179,6 +218,7 @@ def open_seal(ipotesi: str, n_trials: int, motivazione: str,
     }
     with open(MANIFEST_PATH, "w") as f:
         yaml.safe_dump(man, f, sort_keys=False, allow_unicode=True)
-    record_trial("APERTURA_HOLDOUT", {"ipotesi": ipotesi, "n_trials": n_trials},
+    record_trial("APERTURA_HOLDOUT", {"lotto": lotto, "ipotesi": ipotesi,
+                                      "n_trials": n_trials},
                  {"motivazione": motivazione})
     return dati
