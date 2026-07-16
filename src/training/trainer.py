@@ -1,6 +1,4 @@
 import pandas as pd
-import numpy as np
-import xgboost as xgb
 from sklearn.metrics import accuracy_score
 import joblib
 import os
@@ -9,6 +7,7 @@ from datetime import datetime
 from loguru import logger
 import redis
 from src.training.feature_engine import prepare_train_data
+from src.training.model_fit import fit_model
 from src.backtest import backtest_portfolio
 
 class Trainer:
@@ -18,7 +17,7 @@ class Trainer:
         self.challenger_path = "config/models/challenger.pkl"
 
     def train(self, X_train: pd.DataFrame, X_val: pd.DataFrame, y_train: pd.Series, y_val: pd.Series,
-              val_candles: dict = None):
+              X_calib: pd.DataFrame = None, y_calib: pd.Series = None, val_candles: dict = None):
         """Addestra un nuovo modello XGBoost su train/validation già pronti e già
         divisi (Approccio A: possono provenire dalla concatenazione di più
         simboli). Lo split va fatto PRIMA per singolo simbolo (rispettando
@@ -26,6 +25,11 @@ class Trainer:
         train e per validation — uno split unico sul dataset già concatenato
         con shuffle=False finirebbe per validare quasi solo sull'ultimo
         simbolo appeso, non su un campione rappresentativo di tutti.
+
+        X_calib/y_calib: terzo split, cronologicamente tra train e val, usato
+        SOLO per early stopping e calibrazione delle probabilità (mai per il
+        confronto champion/challenger, che resta su val — altrimenti la
+        stessa fetta di dati influenzerebbe sia il fit sia la promozione).
 
         val_candles: {symbol: OHLCV del periodo di validation} — se presente,
         champion e challenger si confrontano sul PnL NETTO del backtest
@@ -41,15 +45,17 @@ class Trainer:
         distribution = y_train.value_counts(normalize=True).sort_index()
         logger.info(f"📊 Distribuzione classi train (down/flat/up): {distribution.round(3).to_dict()}")
 
-        model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
-            objective='multi:softprob',
-            eval_metric='mlogloss',
-            random_state=42
-        )
-        model.fit(X_train, y_train)
+        model, fit_info = fit_model(X_train, y_train, X_calib, y_calib)
+        if fit_info["calibrated"]:
+            logger.info(
+                f"🎯 Probabilità calibrate (Platt/sigmoid) sul set di calibrazione "
+                f"({fit_info['n_trees']} alberi, early stopping)"
+            )
+        else:
+            logger.warning(
+                "⚠️ Calibrazione saltata (set di calibrazione assente o troppo piccolo): "
+                "le probabilità potrebbero non essere affidabili per la soglia configurata"
+            )
 
         acc = accuracy_score(y_val, model.predict(X_val))
         logger.info(f"✅ Accuratezza: {acc:.2%}")
