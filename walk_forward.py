@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.backtest import BacktestParams, backtest_joint
 from src.data_collector import DataCollector
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 from src.training.feature_engine import prepare_train_data
 from src.training.model_fit import fit_model
@@ -96,6 +97,8 @@ def main():
     parser.add_argument("--direction-cap", type=int, default=None,
                         help="override di max_positions_same_direction (default: valore in config, "
                              "0 o negativo per disattivarlo esplicitamente durante la taratura)")
+    parser.add_argument("--no-circuit-breaker", action="store_true",
+                        help="disattiva il circuit breaker per confrontare col comportamento senza")
     args = parser.parse_args()
 
     with open(CONFIG_PATH) as f:
@@ -124,6 +127,7 @@ def main():
         taker_fee_pct=config.get("taker_fee_pct", 0.0005),
         prob_threshold=config.get("ml_confidence_threshold", 0.55),
         max_positions_same_direction=direction_cap,
+        circuit_breaker=None if args.no_circuit_breaker else CircuitBreakerParams.from_config(config),
     )
 
     rows = []

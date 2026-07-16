@@ -53,6 +53,12 @@ def get_trading_config() -> Optional[dict]:
     return get_json("trading_config")
 
 
+def get_circuit_breaker_status() -> Optional[dict]:
+    """Pubblicato dall'engine ogni 5s (_position_monitor). None se
+    l'engine non è mai partito col codice che lo pubblica."""
+    return get_json("circuit_breaker_status")
+
+
 def save_trading_config(config_dict: dict):
     client = get_client()
     client.set("trading_config", json.dumps(config_dict))

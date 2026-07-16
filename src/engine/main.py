@@ -24,6 +24,7 @@ from src.shared.notifier import notifier
 from src.shared.json_encoder import to_json
 from src.shared.candle_feed import CandleFeed
 from src.shared.throttle import WriteThrottle
+from src.shared.circuit_breaker import CircuitBreaker, CircuitBreakerParams
 from src.shared import store
 from src.exit_model import ATRExitModel
 from src.exit_model.profiles import build_exit_model as _build_exit_model
@@ -89,6 +90,9 @@ class TradingEngine:
         self.reverse_confidence_margin = 0.05
         self.entry_cooldown_minutes = 60
 
+        self.circuit_breaker_enabled = True
+        self.circuit_breaker = CircuitBreaker()
+
         # Bootstrap REST dei modelli a candele: bastano ~30 candele per
         # scaldare ATR (finestra 14) e pattern (finestra 10) all'avvio,
         # poi restano aggiornati dallo stream WebSocket @kline.
@@ -102,6 +106,7 @@ class TradingEngine:
         await self._bootstrap_candle_models()
         await self._load_positions_from_redis()
         await self._load_capital_from_redis()
+        await self._seed_circuit_breaker()
 
         self.ws_task = asyncio.create_task(self._websocket_loop())
         asyncio.create_task(self._redis_listener())
@@ -165,6 +170,13 @@ class TradingEngine:
         self.reverse_cooldown_minutes = config.reverse_cooldown_minutes
         self.reverse_confidence_margin = config.reverse_confidence_margin
         self.entry_cooldown_minutes = config.entry_cooldown_minutes
+        self.circuit_breaker_enabled = config.circuit_breaker_enabled
+        self.circuit_breaker.update_params(CircuitBreakerParams(
+            max_consecutive_losses=config.circuit_breaker_max_consecutive_losses,
+            consecutive_loss_cooldown_minutes=config.circuit_breaker_cooldown_minutes,
+            max_daily_loss_pct=config.circuit_breaker_max_daily_loss_pct,
+            max_drawdown_pct=config.circuit_breaker_max_drawdown_pct,
+        ))
         self._warn_if_holding_below_model_horizon(config)
         self.config = config
         self.config_version += 1
@@ -209,6 +221,21 @@ class TradingEngine:
                 logger.info(f"💰 Capitale caricato da Redis: {self.capital:.2f} USDT")
             except ValueError:
                 logger.warning(f"⚠️ Valore capitale non valido su Redis, resto a {self.capital:.2f}: {value!r}")
+
+    async def _seed_circuit_breaker(self):
+        """Ricostruisce lo stato del circuit breaker dallo storico dei trade
+        (data/hermes.db): senza, un crash durante una serie di perdite (con
+        systemd Restart=always) azzererebbe il contatore a ogni riavvio,
+        vanificando la protezione proprio quando serve di più."""
+        try:
+            trades_df = store.read_trades(limit=200)
+        except Exception as e:
+            logger.warning(f"⚠️ Impossibile leggere lo storico trade per il circuit breaker: {e}")
+            trades_df = None
+        self.circuit_breaker.seed_from_history(trades_df, self.capital)
+        status = self.circuit_breaker.status()
+        if status["tripped"]:
+            logger.warning(f"⛔ Circuit breaker già attivo dopo il riavvio: {status['reason']}")
 
     def _count_open_positions(self, side: str) -> int:
         return sum(1 for pos in self.positions.values() if pos.is_open and pos.side == side)
@@ -512,6 +539,7 @@ class TradingEngine:
         position.is_open = False
         self.capital += pnl
         self.last_close_time[symbol] = datetime.now(timezone.utc)
+        self.circuit_breaker.record_trade(pnl, self.capital)
         await self._save_positions_to_redis()
         await self.redis.set('capital', str(self.capital))
 
@@ -588,6 +616,7 @@ class TradingEngine:
                     )
                     await self._close_position(symbol, reason="MAX_HOLDING")
 
+            await self.redis.set('circuit_breaker_status', self.circuit_breaker.status())
             await self.redis.set('heartbeat_engine', datetime.now(timezone.utc).isoformat())
 
     async def _close_all_positions(self, reason: str):
@@ -656,6 +685,9 @@ class TradingEngine:
                     reason = command.get('reason', 'MANUAL_RESET')
                     logger.warning(f"⛔ Comando ricevuto: chiusura di tutte le posizioni ({reason})")
                     await self._close_all_positions(reason)
+                elif command.get('action') == 'reset_circuit_breaker':
+                    logger.warning("🔄 Comando ricevuto: reset manuale del circuit breaker")
+                    self.circuit_breaker.manual_reset()
             except Exception as e:
                 logger.error(f"❌ Errore comando engine: {e}")
 
@@ -696,6 +728,18 @@ class TradingEngine:
             if signal.action == 'close':
                 self._record_signal(signal, "CLOSE")
                 await self._close_position(signal.symbol, reason="ML_SIGNAL")
+                return
+
+            # Circuit breaker: gate GLOBALE prima di qualunque altra
+            # valutazione, mai sulle chiusure. Blocca sia aperture fresche
+            # sia reverse (che aprono una nuova posizione).
+            if self.circuit_breaker_enabled and self.circuit_breaker.is_tripped():
+                status = self.circuit_breaker.status()
+                logger.warning(
+                    f"⛔ Circuit breaker attivo ({status['reason']}) → segnale "
+                    f"{signal.action} per {signal.symbol} ignorato"
+                )
+                self._record_signal(signal, "CIRCUIT_BREAKER", detail=status["reason"] or "")
                 return
 
             asset_sentiment = self.sentiment_by_asset.get(signal.symbol, self.sentiment_score)

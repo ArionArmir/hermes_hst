@@ -8,7 +8,7 @@ from loguru import logger
 import redis
 from src.training.feature_engine import prepare_train_data
 from src.training.model_fit import fit_model
-from src.backtest import backtest_joint
+from src.backtest import BacktestParams, backtest_joint
 
 class Trainer:
     def __init__(self):
@@ -17,7 +17,8 @@ class Trainer:
         self.challenger_path = "config/models/challenger.pkl"
 
     def train(self, X_train: pd.DataFrame, X_val: pd.DataFrame, y_train: pd.Series, y_val: pd.Series,
-              X_calib: pd.DataFrame = None, y_calib: pd.Series = None, val_candles: dict = None):
+              X_calib: pd.DataFrame = None, y_calib: pd.Series = None, val_candles: dict = None,
+              backtest_params: BacktestParams = None):
         """Addestra un nuovo modello XGBoost su train/validation già pronti e già
         divisi (Approccio A: possono provenire dalla concatenazione di più
         simboli). Lo split va fatto PRIMA per singolo simbolo (rispettando
@@ -35,7 +36,13 @@ class Trainer:
         champion e challenger si confrontano sul PnL NETTO del backtest
         (fee e slippage inclusi), non sull'accuratezza: l'accuratezza premia
         chi indovina le candele, il backtest chi fa soldi con la strategia
-        reale (docs/IMPROVEMENT_PLAN.md, M3)."""
+        reale (docs/IMPROVEMENT_PLAN.md, M3).
+
+        backtest_params: parametri del backtest di confronto (soglia, ATR,
+        cap direzionale, circuit breaker) — deve rispecchiare la config di
+        produzione, altrimenti si promuove un modello sul PnL di una
+        strategia diversa da quella davvero live (train_all_models.py la
+        costruisce dallo stesso YAML letto dall'engine)."""
         logger.info(f"🧠 Avvio training su {len(X_train)} righe (validation: {len(X_val)})...")
 
         if len(X_train) < 100:
@@ -73,7 +80,8 @@ class Trainer:
                     raise ValueError(
                         f"classi champion {list(champion.classes_)} != challenger {list(model.classes_)}"
                     )
-                promote, verdict = self._compare_models(model, champion, X_val, y_val, acc, val_candles)
+                promote, verdict = self._compare_models(model, champion, X_val, y_val, acc, val_candles,
+                                                        backtest_params)
             except Exception as e:
                 # Il champion è stato addestrato su un set di feature diverso
                 # (nomi/ordine non compatibili con FEATURE_COLS attuale): non è
@@ -94,7 +102,8 @@ class Trainer:
 
         return True
 
-    def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles):
+    def _compare_models(self, challenger, champion, X_val, y_val, challenger_acc, val_candles,
+                       backtest_params: BacktestParams = None):
         """(promuovere?, motivazione). Preferisce il backtest a portafoglio
         condiviso (backtest_joint: stesso capitale e cap di margine tra
         simboli, come l'engine live — la promozione deve riflettere lo
@@ -103,8 +112,8 @@ class Trainer:
         Ripiega sull'accuratezza solo se le candele di validation non sono
         disponibili o non producono risultati."""
         if val_candles:
-            challenger_bt = backtest_joint(challenger, val_candles)
-            champion_bt = backtest_joint(champion, val_candles)
+            challenger_bt = backtest_joint(challenger, val_candles, backtest_params)
+            champion_bt = backtest_joint(champion, val_candles, backtest_params)
             if challenger_bt is not None and champion_bt is not None:
                 logger.info(
                     f"🔬 Backtest validation — challenger: PnL netto {challenger_bt.net_pnl:.2f} USDT "

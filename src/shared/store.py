@@ -42,6 +42,7 @@ SIGNAL_OUTCOMES = (
     "NO_CAPITAL",         # sizing nullo
     "EXPOSURE_CAP",       # cap di margine portafoglio raggiunto
     "DIRECTION_CAP",      # troppe posizioni già aperte nella stessa direzione
+    "CIRCUIT_BREAKER",    # pausa attiva: perdite consecutive, giornaliere o drawdown
 )
 
 _SCHEMA = """

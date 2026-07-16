@@ -51,6 +51,7 @@ from src.training.feature_engine import TARGET_DOWN, TARGET_UP
 from src.exit_model.atr_exit import ATRExitModel
 from src.exit_model.profiles import build_exit_model
 from src.volume_pattern import VolumePatternAnalyzer
+from src.shared.circuit_breaker import CircuitBreaker, CircuitBreakerParams
 
 # Barre per anno con candele 1h, per annualizzare lo Sharpe
 BARS_PER_YEAR_1H = 24 * 365
@@ -75,6 +76,10 @@ class BacktestParams:
     # Max posizioni simultanee nella stessa direzione, solo per backtest_joint
     # (unica modalità con stato condiviso tra simboli). None = nessun cap.
     max_positions_same_direction: Optional[int] = None
+    # Circuit breaker (solo backtest_joint, stato condiviso). None = nessuno:
+    # è così che tune_strategy.py isola l'effetto di soglia/ATR da quello del
+    # breaker, e come si misura il "senza breaker" per confronto.
+    circuit_breaker: Optional[CircuitBreakerParams] = None
 
 
 @dataclass
@@ -326,7 +331,10 @@ def backtest_joint(model, candles_by_symbol: Dict[str, pd.DataFrame],
     uscite restano per-simbolo), ma tutti condividono lo stesso `capital` e
     competono per lo stesso `margin_cap` — è questo che rende visibile il
     rischio di correlazione: simboli che aprono long in blocco esauriscono
-    il margine disponibile invece di aprire tutti a piena taglia."""
+    il margine disponibile invece di aprire tutti a piena taglia. Supporta
+    anche il circuit breaker (src/shared/circuit_breaker.py): il fold peggiore
+    del walk-forward era una sequenza di stop loss consecutivi NEL TEMPO, non
+    un eccesso di posizioni contemporanee — il cap direzionale non lo copre."""
     params = params or BacktestParams()
     if not candles_by_symbol:
         return None
@@ -361,6 +369,7 @@ def backtest_joint(model, candles_by_symbol: Dict[str, pd.DataFrame],
     pending_actions: Dict[str, str] = {}
     trades: List[dict] = []
     equity = np.empty(n_bars)
+    breaker = CircuitBreaker(params.circuit_breaker) if params.circuit_breaker else None
 
     def margin_in_use(bar_by_symbol: dict) -> float:
         total = 0.0
@@ -385,9 +394,13 @@ def backtest_joint(model, candles_by_symbol: Dict[str, pd.DataFrame],
             "pnl": gross - fee, "pnl_gross": gross, "fees": fee,
             "bars_held": position.bars_held, "reason": reason,
         })
+        if breaker is not None:
+            breaker.record_trade(gross - fee, capital, now=common_index[bar_i])
 
     def try_open(sym: str, action: str, price: float, bar_by_symbol: dict):
         side = "long" if action == "buy" else "short"
+        if breaker is not None and breaker.is_tripped(now=common_index[i]):
+            return  # circuit breaker attivo, come l'engine live
         if params.max_positions_same_direction is not None:
             same_direction = sum(1 for p in positions.values() if p.side == side)
             if same_direction >= params.max_positions_same_direction:

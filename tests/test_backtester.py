@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.backtest import BacktestParams, backtest_symbol, backtest_portfolio, backtest_joint
 from src.backtest.backtester import _align_common_index
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 
 FLAT = [0.1, 0.8, 0.1]    # (down, flat, up)
@@ -232,3 +233,63 @@ def test_direction_cap_none_means_uncapped():
     r1 = backtest_joint(model, candles, params_uncapped)
     r2 = backtest_joint(model, candles, params_high_cap)
     assert len(r1.trades) == len(r2.trades)
+
+
+# ---------- circuit breaker (usa un DatetimeIndex vero: record_trade/
+# is_tripped fanno aritmetica su datetime, un RangeIndex intero non basta) ----------
+
+def _flat_candles_dt(n=100, price=100.0, volume=10.0, start="2026-01-01") -> pd.DataFrame:
+    df = _flat_candles(n=n, price=price, volume=volume)
+    df.index = pd.date_range(start, periods=n, freq="1h")
+    return df
+
+
+def test_circuit_breaker_none_means_no_breaker():
+    # A prezzo ~fermo ogni trade chiude in perdita netta (fee+slippage):
+    # senza breaker, MAX_HOLDING ogni 5 barre per tutta la serie.
+    candles = {"BTCUSDT": _flat_candles_dt()}
+    model = StubModel(lambda i: BUY)
+
+    result = backtest_joint(model, candles, BacktestParams(pattern_confirmation=False,
+                                                           circuit_breaker=None))
+
+    assert len(result.trades) > 3  # nessuna pausa: continua a tradare per tutta la serie
+
+
+def test_circuit_breaker_stops_reopening_after_consecutive_losses():
+    candles = {"BTCUSDT": _flat_candles_dt()}
+    model = StubModel(lambda i: BUY)
+    breaker_params = CircuitBreakerParams(
+        max_consecutive_losses=2, consecutive_loss_cooldown_minutes=10_000,  # non riprende nel test
+        max_daily_loss_pct=None, max_drawdown_pct=None,
+    )
+
+    with_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=breaker_params))
+    without_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=None))
+
+    assert len(with_breaker.trades) < len(without_breaker.trades)
+    assert len(with_breaker.trades) <= 3  # 2 perdite + al più 1 in corso quando scatta
+
+
+def test_circuit_breaker_daily_loss_caps_trades_per_calendar_day():
+    candles = {"BTCUSDT": _flat_candles_dt(n=200)}
+    model = StubModel(lambda i: BUY)
+    # Ogni trade perde ~0.21 USDT (fee+slippage): 5 bastano a superare lo
+    # 0.1% di 1000 USDT in un giorno, poi il breaker resta attivo fino al
+    # prossimo giorno UTC (a differenza del cooldown, non si autoresetta prima).
+    breaker_params = CircuitBreakerParams(
+        max_consecutive_losses=None, max_daily_loss_pct=0.001, max_drawdown_pct=None,
+    )
+
+    result = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=breaker_params, initial_capital=1000.0))
+    without_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=None, initial_capital=1000.0))
+
+    assert result.n_trades < without_breaker.n_trades
+
+    dates = candles["BTCUSDT"].index[result.trades["bar"]].normalize()
+    trades_per_day = result.trades.groupby(dates).size()
+    assert trades_per_day.max() <= 6  # mai più di ~5 perdite prima che scatti

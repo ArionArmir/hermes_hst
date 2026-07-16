@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.backtest import BacktestParams, backtest_portfolio, backtest_joint
 from src.data_collector import DataCollector
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 
 CONFIG_PATH = "config/trading_params.yaml"
@@ -61,6 +62,7 @@ def main():
         # regolatore di selettività (usato da inference e policy)
         prob_threshold=config.get("ml_confidence_threshold", 0.55),
         max_positions_same_direction=config.get("max_positions_same_direction"),
+        circuit_breaker=CircuitBreakerParams.from_config(config),
     )
     results = backtest_portfolio(model, candles_by_symbol, params)
 

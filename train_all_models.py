@@ -18,7 +18,9 @@ from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from src.backtest import BacktestParams
 from src.data_collector import DataCollector
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 from src.training.feature_engine import prepare_train_data
 from src.training.trainer import Trainer
@@ -125,8 +127,25 @@ def main():
     )
     check_scale_invariance(per_symbol_iqr)
 
+    # Il backtest di confronto champion/challenger deve usare la STESSA
+    # config del sistema live (soglia, ATR, cap direzionale, circuit
+    # breaker) — altrimenti si promuoverebbe un modello sul PnL di una
+    # strategia diversa da quella davvero tradata.
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+    backtest_params = BacktestParams(
+        max_position_usdt=config.get("max_position_size_usdt", 50.0),
+        leverage=config.get("leverage", 3),
+        max_exposure=config.get("max_exposure", 0.5),
+        taker_fee_pct=config.get("taker_fee_pct", 0.0005),
+        prob_threshold=config.get("ml_confidence_threshold", 0.55),
+        max_positions_same_direction=config.get("max_positions_same_direction"),
+        circuit_breaker=CircuitBreakerParams.from_config(config),
+    )
+
     trainer = Trainer()
-    trainer.train(X_train, X_val, y_train, y_val, X_calib=X_calib, y_calib=y_calib, val_candles=val_candles)
+    trainer.train(X_train, X_val, y_train, y_val, X_calib=X_calib, y_calib=y_calib,
+                  val_candles=val_candles, backtest_params=backtest_params)
 
 
 if __name__ == "__main__":

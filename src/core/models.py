@@ -78,3 +78,15 @@ class Config(BaseModel):
     # (TARGET_HORIZON_BARS × timeframe = 5 × 1h = 300 min), altrimenti le
     # posizioni vengono chiuse prima che la predizione possa realizzarsi.
     max_holding_minutes: int = 300
+    # Circuit breaker (docs/IMPROVEMENT_PLAN.md, V1/N1): il fold peggiore del
+    # walk-forward era una sequenza di 6 stop loss consecutivi in ~15 ore, non
+    # troppe posizioni correlate (il cap direzionale non copre questo caso).
+    # Valori tarati con walk_forward.py sweep 4 fold: un cooldown breve
+    # (60-360 min) non protegge affatto — il "regime cattivo" durava ~15h,
+    # più del cooldown. consec=3/cooldown=1440 min (24h) è il migliore
+    # trovato (fold peggiore −33→+2 USDT, totale −23→+12, fold buoni invariati).
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_max_consecutive_losses: int = 3
+    circuit_breaker_cooldown_minutes: int = 1440
+    circuit_breaker_max_daily_loss_pct: float = 0.05
+    circuit_breaker_max_drawdown_pct: float = 0.20
