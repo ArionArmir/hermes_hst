@@ -17,14 +17,19 @@ from src.shared.features import FEATURE_COLS, MIN_CANDLES, compute_features
 MIN_RIGHE_TRAIN = 200
 
 
-def prepara(df: pd.DataFrame, spec: TargetSpec):
-    """(X, y) per una definizione di target."""
-    feats = compute_features(df)
+def prepara(df: pd.DataFrame, spec: TargetSpec, feature_fn=None):
+    """(X, y) per una definizione di target.
+
+    `feature_fn` sostituisce compute_features per bracci sperimentali con
+    feature aggiuntive (es. positioning): le colonne di X sono quelle che la
+    funzione produce, non FEATURE_COLS fisse.
+    """
+    feats = (feature_fn or compute_features)(df)
     target, valid = make_target(df, spec)
     data = feats.copy()
     data["target"] = target
     data = data[valid].dropna()
-    return data[FEATURE_COLS], data["target"]
+    return data[list(feats.columns)], data["target"]
 
 
 def _indice_comune(tc: dict[str, pd.DataFrame]) -> pd.DatetimeIndex:
@@ -43,21 +48,39 @@ def _indice_comune(tc: dict[str, pd.DataFrame]) -> pd.DatetimeIndex:
 
 
 def run_walkforward(spec: TargetSpec, q: float, raw: dict[str, pd.DataFrame],
-                    bounds: list, cfg: dict) -> dict | None:
+                    bounds: list, cfg: dict, feature_fn=None) -> dict | None:
     """Walk-forward completo con soglia ricalibrata per fold alla frequenza q.
 
     La soglia e' il quantile 1-q delle probabilita' sul set di CALIBRAZIONE
     (dentro il train): mai sul test, sarebbe lookahead.
+
+    `feature_fn` (opzionale) sostituisce compute_features in TRAIN e in
+    BACKTEST: backtest_joint ricalcola le feature internamente dalla propria
+    import, quindi va patchato per la durata del run — altrimenti il modello
+    addestrato su N feature riceverebbe le 18 di default e o esploderebbe o,
+    peggio, predirebbe su input sbagliati senza dirlo. Le candele in `raw`
+    devono contenere le eventuali colonne extra che feature_fn richiede.
     """
+    import src.backtest.backtester as _bt
     from src.training.model_fit import fit_model
 
+    _orig_cf = _bt.compute_features
+    if feature_fn is not None:
+        _bt.compute_features = feature_fn
+    try:
+        return _run_inner(spec, q, raw, bounds, cfg, feature_fn, fit_model)
+    finally:
+        _bt.compute_features = _orig_cf
+
+
+def _run_inner(spec, q, raw, bounds, cfg, feature_fn, fit_model):
     pnls, trades_all, soglie = [], [], []
     for k in range(len(bounds) - 1):
         tr_end, te_end = bounds[k], bounds[k + 1]
         tr_X, ca_X, tr_y, ca_y, tc = [], [], [], [], {}
         for sym, df in raw.items():
             td = df[df.index <= tr_end]
-            X, y = prepara(td, spec)
+            X, y = prepara(td, spec, feature_fn)
             if len(X) < MIN_RIGHE_TRAIN:
                 return None
             X_tr, X_ca, y_tr, y_ca = train_test_split(X, y, test_size=0.15, shuffle=False)
