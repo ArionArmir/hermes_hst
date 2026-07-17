@@ -204,12 +204,70 @@ Famiglia `breadth_v1` in `docs/experiment_registry.jsonl`. Ogni tentativo.
 
 ---
 
-## Esito
+## Esito — 2026-07-17, 2.5 minuti di calcolo
 
-*Da compilare a run concluso.*
+- **Configurazioni girate**: 5 / 5
+- **Intersezione verificata**: **5.56 anni** su 47 simboli (48.703 barre,
+  2020-12-25 → 2026-07-16), come previsto
+- **U47 — trade prodotti**: **1.592** / 1.344 richiesti ✅
+- **H5a FALSIFICATA · H5b FALSIFICATA · H5c FALSIFICATA**
+- **Holdout**: **NON aperto**. Lotti A e B sigillati.
 
-- [ ] Configurazioni girate: __ / 5
-- [ ] Intersezione storica verificata: __ anni (attesi ~5.5)
-- [ ] U47 — trade prodotti: __ / 1.344 richiesti
-- [ ] H5a __ · H5b (curva di scala) __ · H5c __
-- [ ] Holdout aperto: no / lotto A
+| Universo | PnL | trade | fold+ | Sharpe/trade | concentraz. | IC95 bootstrap |
+|---|---|---|---|---|---|---|
+| U7 | −163.12 | 478 | 1/4 | **−0.0554** | RUNE 99% | [−489, +124] |
+| U17 | −342.36 | 659 | 1/4 | −0.0717 | KNC 51% | [−824, +77] |
+| U27 | −478.26 | 999 | 0/4 | −0.0698 | ONT 20% | [−1014, +54] |
+| U37 | +70.60 | 1467 | 2/4 | +0.0068 | UNI 12% | [−405, +551] |
+| **U47** | **−194.16** | **1592** | **1/4** | **−0.0170** | QTUM 13% | **[−726, +327]** |
+
+**La breadth ha funzionato: i trade sono saliti da 478 a 1.592** (3.3×), oltre i
+1.344 richiesti. **Il segnale no**: lo Sharpe/trade è negativo. `IR ≈ IC ×
+√breadth` non ci ha salvati perché **su un universo ampio l'IC non c'è**.
+
+### Il risultato che spiega tutta la sessione
+
+`U7` qui sono **7 simboli estratti a caso** dai 47 (seme 42), non i nostri.
+Stessa identica configurazione congelata:
+
+> **i nostri 7 simboli** → Sharpe/trade **+0.1190** (510 trade)
+> **7 simboli a caso** → Sharpe/trade **−0.0554** (478 trade)
+
+Stesso modello, stesse feature, stesso target, stesso numero di trade. **Cambia
+solo quali 7 cripto guardi.** Il presunto edge migliore mai osservato non era
+una proprietà del modello: era una proprietà **dei nostri sette simboli** —
+scelti il primo giorno e poi guardati 115 volte.
+
+*Cautela dovuta*: una sola estrazione casuale non è un test di
+randomizzazione (n=1, potrebbe essere sfortuna). Ma la curva U17/U27/U37/U47 —
+tutta attorno o sotto lo zero con concentrazione che scende dal 99% al 13% —
+dice la stessa cosa: **più l'universo è ampio e meno concentrato, più l'edge
+sparisce.** Non è un dettaglio da approfondire: è la conclusione.
+
+### H5b — la curva di scala
+
+`sr·√n` doveva crescere lungo U7→U47 e superare 4.36. Osservato:
+−1.21 · −1.84 · −2.21 · **+0.26** · −0.68. Nessuna crescita, nessun segno di
+√breadth: la Legge Fondamentale non ha nulla da moltiplicare quando IC ≈ 0.
+
+### Conclusione — le ipotesi accessibili sono esaurite
+
+Con **120 tentativi registrati** su 5,8 anni di storia:
+
+- **Target**: chiuso. Né soglia (H1), né orizzonte (H2), né etichetta (H3).
+- **Feature**: chiuso per indisponibilità di dati. Open interest, long/short
+  ratio e order book hanno 20 giorni di ritenzione. L'order flow — l'unica
+  aggiunta possibile e sostanziale — non ha spostato nulla.
+- **Timeframe**: chiuso. A 5m il movimento copre il costo 1.76× contro 9.27× a
+  1h; più dati ma economia distrutta.
+- **Breadth**: chiuso. Più simboli danno più trade ma nessun segnale.
+
+**Questi dati non contengono un edge dimostrabile a 1h con queste feature.** È
+il risultato, ed è valido: non "non abbiamo trovato niente", ma "abbiamo
+cercato dove aveva senso cercare, con un metodo che ci avrebbe impedito di
+ingannarci, e non c'è".
+
+L'holdout resta intatto — **due lotti da 6 simboli mai guardati, entrambi
+carichi**. Non è stato speso perché nessun candidato lo ha mai meritato, ed è
+esattamente il comportamento corretto: una cartuccia spesa su un candidato
+bocciato è buttata, e non ce ne sono altre.
