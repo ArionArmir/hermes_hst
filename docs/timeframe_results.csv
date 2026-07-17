@@ -1,0 +1,6 @@
+tf,universo,n_simboli,soglia_target,anni,pnl_totale,worst_fold,fold_positivi,n_trade,sharpe_trade,dsr,quota_simbolo_top,simbolo_top,ic95_basso,ic95_alto,p_perdita,nota
+2h,47 simb,47,0.0071,5.56,-40.78,-179.61,2,641,-0.0084,0.0005,0.173,XRPUSDT,-627.1,509.3,0.5513,
+4h,47 simb,47,0.01,5.56,-44.87,-197.25,3,914,-0.0065,0.0005,0.139,SKLUSDT,-560.9,456.8,0.5718,
+8h,47 simb,47,0.0141,5.56,-95.19,-196.0,2,506,-0.0245,0.0001,0.163,RUNEUSDT,-524.8,311.0,0.6662,
+1d,47 simb,47,0.0245,5.56,-547.12,-216.05,0,287,-0.3254,0.0,0.302,DOTUSDT,-821.0,-289.5,1.0,
+4h,nostri 7,7,0.01,5.83,118.65,-59.6,3,213,0.0748,0.0211,0.332,DOGEUSDT,-122.5,364.6,0.165,"DESCRITTIVA, non promuovibile"

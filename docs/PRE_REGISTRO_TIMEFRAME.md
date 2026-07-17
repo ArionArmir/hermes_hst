@@ -176,12 +176,83 @@ anche perdente.
 
 ---
 
-## Esito
+## Esito — 2026-07-17, ~40 secondi di calcolo
 
-*Da compilare a run concluso.*
+- **Configurazioni girate**: 5 / 5
+- **4h × 47 — Sharpe/trade: −0.0065** · 914 trade
+- **H6a FALSIFICATA · H6b FALSIFICATA · H6c FALSIFICATA**
+- **Holdout**: **NON aperto**. Lotti A e B sigillati.
 
-- [ ] Configurazioni girate: __ / 5
-- [ ] 4h × 47 — Sharpe/trade: __ · trade: __
-- [ ] H6a __ · H6b (curva) __ · H6c __
-- [ ] 4h × i nostri 7 (descrittivo): __
-- [ ] Holdout aperto: no / lotto A
+| tf | universo | PnL | trade | fold+ | Sharpe/trade | soglia | IC95 bootstrap |
+|---|---|---|---|---|---|---|---|
+| 2h | 47 | — | 641 | — | −0.0084 | 0.71% | — |
+| **4h** | **47** | **−44.87** | **914** | **3/4** | **−0.0065** | 1.00% | **[−561, +457]** |
+| 8h | 47 | −95.19 | 506 | 2/4 | −0.0245 | 1.41% | [−525, +311] |
+| 1d | 47 | −547.12 | 287 | 0/4 | **−0.3254** | 2.45% | [−821, **−290**] |
+| 4h | **nostri 7** | +118.65 | 213 | 3/4 | **+0.0748** | 1.00% | [−122, +365] |
+
+### H6a — FALSIFICATA. Il costo relativo non era il vincolo.
+
+A 4h × 47 lo Sharpe/trade è **−0.0065**, contro −0.0170 a 1h. La direzione è
+quella prevista dal meccanismo (raddoppiare il margine mossa/costo migliora
+qualcosa) ma l'effetto è **microscopico e resta negativo**. Il costo non era il
+tappo: **il segnale non c'è, e nessuna aritmetica lo crea.**
+
+### H6b — FALSIFICATA. La curva non segue mossa/costo.
+
+Se il costo relativo comandasse, lo Sharpe/trade dovrebbe crescere monotono
+2h→1d insieme al margine (17.6× → 63.6×). Osservato:
+
+> −0.0084 · **−0.0065** · −0.0245 · **−0.3254**
+
+Migliora appena da 2h a 4h, poi **peggiora**, e a 1d collassa. Il margine di
+costo cresce di 3.6× da 4h a 1d mentre lo Sharpe crolla di 50×: il meccanismo
+esiste ma è dominato da qualcos'altro — a orizzonti lunghi il modello
+semplicemente non predice.
+
+### La terza conferma indipendente, ed è la stessa di sempre
+
+| | Sharpe/trade |
+|---|---|
+| 1h × **i nostri 7** (h10, q=1%) | **+0.1190** |
+| 1h × 7 simboli **a caso** | −0.0554 |
+| 1h × **47** | −0.0170 |
+| 4h × **i nostri 7** | **+0.0748** |
+| 4h × **47** | −0.0065 |
+
+Il disegno è completo e non ha eccezioni: **i nostri sette simboli danno sempre
+positivo, tutto il resto sempre zero o negativo** — a qualunque timeframe, con
+qualunque target, con qualunque ampiezza. Tre esperimenti indipendenti, tre
+volte lo stesso verdetto.
+
+Non è un edge che vive sui nostri 7. È il residuo di averli scelti una volta e
+poi guardati 125 volte.
+
+*(La riga `4h × nostri 7` è **descrittiva e non promuovibile**, come dichiarato
+prima del run. È qui perché conferma la diagnosi, non perché sia un candidato.)*
+
+---
+
+## Conclusione — la ricerca sui dati storici è conclusa
+
+Con **125 tentativi registrati** su 5.8 anni e 47 simboli, ogni dimensione è
+chiusa **per misura, non per inferenza**:
+
+| Dimensione | Esito | Come è stata chiusa |
+|---|---|---|
+| **Target** | chiuso | H1 soglia ATR falsificata · H2 orizzonte non conclusivo · H3 triple barrier 0/12 (p=0.0005) |
+| **Feature** | chiuso | OI, long/short, order book: 20 giorni di ritenzione. L'order flow — l'unica aggiunta sostanziale — non ha spostato nulla |
+| **Breadth** | chiuso | 3.3× i trade, IC ≈ 0. `IR ≈ IC × √breadth` non ha nulla da moltiplicare |
+| **Timeframe** | chiuso | corto: mossa/costo 1.76× · lungo: H6a/H6b falsificate |
+
+> **Questi dati non contengono un edge dimostrabile con queste feature.**
+> Non "a 1h". Non "con questo target". Punto.
+
+È un **risultato**, non una resa: è ciò che sappiamo dopo 125 tentativi
+**contati**, con un metodo costruito per impedirci di ingannarci. Il 2026-07-16
+"avevamo trovato" +244 con 4/4 fold positivi, ed era falso.
+
+**L'holdout non è mai stato aperto**: due lotti da 6 simboli mai guardati,
+entrambi carichi. Nessun candidato lo ha meritato in 125 tentativi. È
+l'unica risorsa non consumata che resta, ed è intatta perché il sistema ha
+funzionato — non per prudenza di qualcuno.
