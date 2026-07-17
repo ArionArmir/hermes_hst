@@ -31,11 +31,11 @@ from sklearn.model_selection import train_test_split
 
 from src.backtest import BacktestParams, backtest_joint
 from src.data_collector import DataCollector
+from src.research.evaluation import bootstrap_mensile, metriche
 from src.research.target_space import make_target, search_space
 from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import FEATURE_COLS, MIN_CANDLES, compute_features
-from src.shared.holdout import (assert_research_allowed, deflated_sharpe_ratio,
-                                record_trial)
+from src.shared.holdout import assert_research_allowed, record_trial
 
 FAMIGLIA = "target_definition_v1"
 BUDGET = 48                 # dichiarato nel pre-registro: fissa la soglia-fortuna
@@ -116,41 +116,14 @@ def _run_config(spec, raw, bounds, n_fold, cfg_trading):
 
 
 def _metriche(res):
-    T, pnls = res["trades"], res["pnls"]
-    n = len(T)
-    if n < 30:
-        return None
-    pnl = T["pnl"].to_numpy()
-    sr = pnl.mean() / pnl.std(ddof=1) if pnl.std(ddof=1) > 0 else 0.0
-    attr = T.groupby("symbol")["pnl"].sum()
-    # Quota del simbolo migliore sul profitto LORDO (somma dei soli simboli in
-    # utile), non sul netto: dividere per la somma netta esplode quando le
-    # attribuzioni hanno segni misti (+100 e -90 danno 100/10 = 1000%), e la
-    # prima versione produceva quote fino al 3420%. Quella era una metrica
-    # rotta, non una concentrazione estrema.
-    lordo = attr.clip(lower=0).sum()
-    quota = (attr.max() / lordo) if lordo > 0 else 1.0
-    return {
-        "pnl_totale": round(float(sum(pnls)), 2),
-        "worst_fold": round(float(min(pnls)), 2),
-        "fold_positivi": int(sum(1 for p in pnls if p > 0)),
-        "n_trade": n,
-        "sharpe_trade": round(float(sr), 4),
-        "dsr": round(float(deflated_sharpe_ratio(pnl, BUDGET)), 4),
-        "quota_simbolo_top": round(float(quota), 3),
-        "simbolo_top": str(attr.idxmax()) if len(attr) else "",
-    }
+    """Le stesse metriche del motore H3: due copie divergerebbero, e un gate di
+    promozione che si comporta diversamente fra esperimenti renderebbe i
+    risultati non confrontabili."""
+    return metriche(res["pnls"], res["trades"], BUDGET)
 
 
 def _bootstrap_mensile(T, n_boot=10_000):
-    per_mese = T.groupby(T["ts"].dt.to_period("M"))["pnl"].sum().to_numpy()
-    if len(per_mese) < 6:
-        return None
-    rng = np.random.default_rng(42)
-    boot = rng.choice(per_mese, (n_boot, len(per_mese)), replace=True).sum(axis=1)
-    return {"ic95_basso": round(float(np.percentile(boot, 2.5)), 1),
-            "ic95_alto": round(float(np.percentile(boot, 97.5)), 1),
-            "p_perdita": round(float(np.mean(boot <= 0)), 4)}
+    return bootstrap_mensile(T, n_boot)
 
 
 def main():
