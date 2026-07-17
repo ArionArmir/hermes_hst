@@ -144,11 +144,77 @@ tentativo, anche perdente.
 
 ---
 
-## Esito
+## Esito — 2026-07-17, 3.8 minuti di calcolo
 
-*Da compilare a run concluso.*
+- **Configurazioni girate**: 24 / 24
+- **H3a — coppie vinte dal triple barrier: 0 / 12**
+- **H3b — promuovibili: 0** (DSR massimo 34.7%, serve > 90%)
+- **Holdout**: **NON aperto**. Lotti A e B sigillati.
 
-- [ ] Configurazioni girate: __ / 24
-- [ ] H3a — coppie vinte dal triple barrier: __ / 12
-- [ ] H3b — promuovibili: __
-- [ ] Holdout aperto: no / lotto A
+Risultati in `docs/h3_matched_results.csv`, tentativi in
+`docs/experiment_registry.jsonl` sotto `target_h3_matched_v1`.
+
+### H3a — FALSIFICATA, e non di misura
+
+L'orizzonte fisso vince **tutte e 12 le coppie**. Test dei segni bilaterale:
+**p = 0.00049**. Non è "il triple barrier non è migliore": è
+**significativamente peggiore**, con Sharpe/trade negativo in tutte e 12 le
+configurazioni (da −0.06 a −0.14) contro un orizzonte fisso fra −0.02 e +0.12.
+
+| | q=1% | q=2% | q=4% |
+|---|---|---|---|
+| **h2** | fisso +0.0121 · TB −0.1011 | fisso +0.0055 · TB −0.0997 | fisso −0.0231 · TB −0.1309 |
+| **h5** | fisso +0.0436 · TB −0.1366 | fisso +0.0145 · TB −0.1199 | fisso −0.0129 · TB −0.0982 |
+| **h10** | fisso **+0.1190** · TB −0.0719 | fisso +0.0107 · TB −0.0615 | fisso −0.0125 · TB −0.0835 |
+| **h20** | fisso +0.1113 · TB −0.0847 | fisso +0.0535 · TB −0.0733 | fisso +0.0041 · TB −0.0640 |
+
+### La normalizzazione ha funzionato solo a metà — e non cambia la conclusione
+
+La frequenza di segnale è appaiata **sulla calibrazione**, ma sul test il
+triple barrier trada ancora 1.3-3.2× di più. Le soglie calibrate erano quasi
+identiche (es. h5 q=1%: 0.507 per entrambe), quindi la differenza nasce dopo:
+il TB cambia direzione più spesso, e ogni inversione è un trade in più.
+
+**Controllo decisivo**: se fosse il numero di trade a spiegare tutto, una
+configurazione a orizzonte fisso con *più* trade dovrebbe fare peggio di un
+triple barrier con *meno*. Non succede mai:
+
+> TB h5 q=1% — **1416 trade**, SR **−0.1366**
+> La *peggiore* fissa con più trade (2389) — SR **−0.0231**
+
+L'orizzonte fisso trada 1.7× di più e fa comunque 6× meglio. **Il conteggio dei
+trade non è la causa.** H3 è chiusa.
+
+### Perché (ipotesi, non dimostrata)
+
+Con barriere a ±0.5% e orizzonti di 5-20 ore, *quale* barriera venga toccata
+per prima è dominato dal rumore di breve periodo, non dalla direzione: è quasi
+una monetina. L'etichetta a orizzonte fisso conserva invece la piccola
+componente prevedibile del rendimento. Il triple barrier descrive meglio ciò
+che accade a un trade, ma **descrive una cosa meno prevedibile**. Coerenza con
+la regola di trading e prevedibilità sono in conflitto, e abbiamo scoperto da
+che parte pende.
+
+### Il risultato collaterale più interessante
+
+**h10, q=1%, orizzonte fisso**: PnL +337.17, 510 trade, 3/4 fold,
+**Sharpe/trade 0.1190 — il più alto mai osservato**, quasi il doppio dei 0.0651
+della produzione. DSR comunque solo **34.7%**, perché 510 trade non bastano a
+dimostrarlo.
+
+Si vede un andamento netto: **più il filtro è selettivo (q basso), più alto è
+lo Sharpe per trade** — coerente con l'analisi dei bucket del 2026-07-16 (il
+modello è monotòno: più confidenza, più rendimento). Ma meno trade significano
+meno evidenza, e l'asticella del DSR sale al calare di `n`. È lo stesso muro di
+sempre, da un'altra angolazione.
+
+### Conteggio tentativi
+
+91 + 24 = **115**.
+
+### Cosa resta
+
+Il target è chiuso come leva: né la soglia, né l'orizzonte, né l'etichetta lo
+sbloccano. Le ipotesi rimaste non sono più sul target ma sulle **feature** (le
+18 non contengono l'informazione) o sul **timeframe orario** (l'edge, se c'è,
+non vive a 1h). Entrambe richiedono un pre-registro nuovo.
