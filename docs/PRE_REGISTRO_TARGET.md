@@ -214,11 +214,87 @@ DSR non è calcolabile e la correzione non corregge nulla.
 
 ---
 
-## Esito
+## Esito — 2026-07-17, 7 minuti di calcolo
 
-*Da compilare a run concluso — prima dell'eventuale apertura dell'holdout.*
+- **Configurazioni girate**: 48 / 48
+- **Promuovibili**: **0**
+- **DSR massimo osservato**: **29.8%** (h20, 0.5% fisso, orizzonte fisso) — molto
+  sotto il 90% richiesto. Nessuna configurazione si è avvicinata.
+- **Holdout**: **NON aperto**. Entrambi i lotti restano sigillati.
 
-- [ ] Configurazioni girate: __ / 48
-- [ ] Promuovibili: __
-- [ ] Esito ipotesi: H1 __ · H2 __ · H3 __ · H4 __
-- [ ] Holdout aperto: no / lotto A (data, ipotesi)
+Risultati completi in `docs/target_search_results.csv`, tutti i 48 tentativi in
+`docs/experiment_registry.jsonl` sotto `target_definition_v1`.
+
+### H1 — soglia scalata su ATR: **FALSIFICATA**
+
+Nessuna variante ATR batte la migliore variante fissa; sono quasi tutte
+negative o attorno allo zero, e diverse tradano pochissimo (38-93 trade su 4.7
+anni). L'ipotesi era mia ed era ragionevole — porre la stessa domanda in tutti
+i regimi — ma i dati la rifiutano.
+
+### H2 — l'orizzonte ottimale non è 5: **INDICATIVA, NON CONCLUSIVA**
+
+I tre migliori per DSR sono tutti a soglia 0.5% fissa e orizzonte fisso:
+
+| config | PnL | trade | fold+ | Sharpe/trade | DSR |
+|---|---|---|---|---|---|
+| h20 | +401.32 | 967 | 3/4 | 0.0726 | 29.8% |
+| **h5 (produzione)** | +244.65 | 880 | 4/4 | 0.0651 | 19.8% |
+| h10 | +245.77 | 778 | 3/4 | 0.0594 | 12.9% |
+
+L'orizzonte 20 rende di più del 5 ma con un fold negativo e un DSR comunque
+lontanissimo dalla soglia. Non è promuovibile e non giustifica una modifica.
+
+### H3 — triple barrier: **NON TESTATA** (braccio confuso, errore di disegno)
+
+Tutte e 24 le configurazioni triple barrier sono negative (PnL medio −356.9,
+0 positive), con 2028 trade medi contro i 587 dell'orizzonte fisso. Non è una
+falsificazione: è un **confondimento causato da questo pre-registro**.
+
+Distribuzione delle classi (BTCUSDT, storia intera):
+
+| config | DOWN | FLAT | UP |
+|---|---|---|---|
+| h5_0.005pct_fh | 25.3% | **47.9%** | 26.8% |
+| h5_0.005pct_tb | 40.4% | **19.7%** | 39.9% |
+| h10_0.005pct_tb | 44.3% | **11.8%** | 43.9% |
+
+Con barriere strette quasi ogni barra ne tocca una, e la classe FLAT — il "non
+fare nulla" — collassa. Le probabilità a priori di UP/DOWN salgono da ~26% a
+~44%, quindi la soglia **fissa** a 0.50 è un filtro molto più permissivo per il
+triple barrier che per l'orizzonte fisso. Da qui i 2028 trade e l'emorragia di
+costi.
+
+Fissare la soglia a 0.50 aveva una giustificazione strutturale valida (mutua
+esclusività), ma non prevedeva che cambiare l'etichetta cambia le priorità
+delle classi, e quindi cosa quella soglia *significhi*. **Il confronto non era
+alla pari.** Metà del budget è stata spesa su un braccio ininterpretabile.
+
+### H4 — nessun target supera la soglia: **CONFERMATA** (per il braccio testato)
+
+Ventiquattro modi diversi di porre la domanda a orizzonte fisso, e nessuno
+produce un segnale che batta la fortuna. Con il braccio H3 non valutabile, la
+conclusione onesta non è "il target non è il problema", ma: **la soglia e
+l'orizzonte del target non sono il problema.**
+
+### Bug trovato dopo il run
+
+`quota_simbolo_top` era `max/somma_netta`: con attribuzioni di segno misto
+(+100 e −90 → 100/10) produceva quote fino al **3420%**. Corretta in
+`max/profitto_lordo`, con test. **Non ha cambiato alcuna decisione**: il
+criterio vincolante era il DSR, e con un massimo del 29.8% nessuna
+configurazione è mai arrivata vicino al gate di concentrazione.
+
+### Conteggio tentativi aggiornato
+
+41 (`parametri_trading_5.8y_wf4fold`) + 2 (`order_flow_prereg`) + 48
+(`target_definition_v1`) = **91**.
+
+### Cosa NON fare adesso
+
+Rilanciare il braccio triple barrier con una soglia calibrata per configurazione
+sarebbe la correzione ovvia, ed è probabilmente giusta — ma è **una nuova
+ricerca**, con un nuovo pre-registro e un budget che si somma ai 91 tentativi
+già spesi. Non va infilata come "aggiustamento" di questa: allargare lo spazio
+dopo aver visto i risultati è esattamente il meccanismo che il pre-registro
+esiste per impedire.

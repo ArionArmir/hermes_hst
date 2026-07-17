@@ -17,6 +17,11 @@ data/
 *.db
 *.sqlite
 
+# Eccezione: i referti degli esperimenti sono quaderni di laboratorio, non dati
+# derivati. Senza versionarli si perde il conteggio dei tentativi, e senza
+# quello il Deflated Sharpe non e' calcolabile (vedi src/shared/holdout.py).
+!docs/*.csv
+
 # File di sistema
 .DS_Store
 Thumbs.db

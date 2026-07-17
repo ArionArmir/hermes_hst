@@ -123,8 +123,13 @@ def _metriche(res):
     pnl = T["pnl"].to_numpy()
     sr = pnl.mean() / pnl.std(ddof=1) if pnl.std(ddof=1) > 0 else 0.0
     attr = T.groupby("symbol")["pnl"].sum()
-    tot = attr.sum()
-    quota = (attr.max() / tot) if tot > 0 else 1.0
+    # Quota del simbolo migliore sul profitto LORDO (somma dei soli simboli in
+    # utile), non sul netto: dividere per la somma netta esplode quando le
+    # attribuzioni hanno segni misti (+100 e -90 danno 100/10 = 1000%), e la
+    # prima versione produceva quote fino al 3420%. Quella era una metrica
+    # rotta, non una concentrazione estrema.
+    lordo = attr.clip(lower=0).sum()
+    quota = (attr.max() / lordo) if lordo > 0 else 1.0
     return {
         "pnl_totale": round(float(sum(pnls)), 2),
         "worst_fold": round(float(min(pnls)), 2),
