@@ -29,12 +29,10 @@ from loguru import logger
 from scipy import stats
 from sklearn.model_selection import train_test_split
 
-from src.backtest import BacktestParams, backtest_joint
 from src.data_collector import DataCollector
-from src.research.evaluation import bootstrap_mensile, metriche, soglia_per_frequenza
-from src.research.target_space import TargetSpec, make_target
-from src.shared.circuit_breaker import CircuitBreakerParams
-from src.shared.features import FEATURE_COLS, MIN_CANDLES, compute_features
+from src.research.evaluation import bootstrap_mensile, metriche
+from src.research.target_space import TargetSpec
+from src.research.walkforward import run_walkforward
 from src.shared.holdout import assert_research_allowed, record_trial
 
 FAMIGLIA = "target_h3_matched_v1"
@@ -53,63 +51,18 @@ MAX_QUOTA_SIMBOLO = 0.60
 OUT = Path(__file__).parent.parent / "docs" / "h3_matched_results.csv"
 
 
-def _prepare(df, spec):
-    feats = compute_features(df)
-    target, valid = make_target(df, spec)
-    data = feats.copy()
-    data["target"] = target
-    data = data[valid].dropna()
-    return data[FEATURE_COLS], data["target"]
-
-
 def _run(spec: TargetSpec, q: float, raw, bounds, cfg):
-    """Walk-forward con soglia ricalibrata per fold alla frequenza q."""
-    from src.training.model_fit import fit_model
-    pnls, trades_all, soglie = [], [], []
+    """Walk-forward con soglia ricalibrata per fold: ora nel runner condiviso,
+    che i motori target/H3/breadth usano identico (una terza copia sarebbe
+    divergenza garantita).
 
-    for k in range(len(bounds) - 1):
-        tr_end, te_end = bounds[k], bounds[k + 1]
-        tr_X, ca_X, tr_y, ca_y, tc = [], [], [], [], {}
-        for sym, df in raw.items():
-            td = df[df.index <= tr_end]
-            X, y = _prepare(td, spec)
-            if len(X) < 200:
-                return None
-            X_tr, X_ca, y_tr, y_ca = train_test_split(X, y, test_size=0.15, shuffle=False)
-            tr_X.append(X_tr); ca_X.append(X_ca); tr_y.append(y_tr); ca_y.append(y_ca)
-            test_df = df[(df.index > tr_end) & (df.index <= te_end)]
-            tc[sym] = pd.concat([td.iloc[-MIN_CANDLES:], test_df])
-
-        y_train = pd.concat(tr_y, ignore_index=True)
-        if y_train.nunique() < 3:
-            return None
-        X_calib = pd.concat(ca_X, ignore_index=True)
-        model, _ = fit_model(pd.concat(tr_X, ignore_index=True), y_train,
-                             X_calib, pd.concat(ca_y, ignore_index=True))
-
-        # La correzione: soglia dal quantile sulla CALIBRAZIONE, mai sul test
-        soglia = soglia_per_frequenza(model.predict_proba(X_calib), q)
-        soglie.append(soglia)
-
-        params = BacktestParams(
-            max_position_usdt=cfg["max_position_size_usdt"], leverage=cfg["leverage"],
-            max_exposure=cfg["max_exposure"], taker_fee_pct=cfg["taker_fee_pct"],
-            prob_threshold=soglia,
-            max_positions_same_direction=cfg["max_positions_same_direction"],
-            circuit_breaker=CircuitBreakerParams.from_config(cfg),
-            atr_multiplier_sl=3.0, atr_multiplier_tp=3.0,
-            max_holding_bars=spec.horizon,
-        )
-        r = backtest_joint(model, tc, params)
-        pnls.append(r.net_pnl)
-        if len(r.trades):
-            t = r.trades.copy()
-            idx = tc[list(raw)[0]].index
-            t["ts"] = [idx[b] if b < len(idx) else idx[-1] for b in t["bar"]]
-            trades_all.append(t)
-
-    T = pd.concat(trades_all, ignore_index=True) if trades_all else pd.DataFrame()
-    return {"pnls": pnls, "trades": T, "soglia_media": round(sum(soglie) / len(soglie), 4)}
+    Il runner corregge anche la mappatura dei timestamp: `bar` e' la posizione
+    nell'INTERSEZIONE degli indici calcolata da backtest_joint, non nell'indice
+    di un simbolo qualsiasi. Con i 7 parquet allineati la differenza e' nulla e
+    i risultati H3 restano quelli committati; con universi eterogenei no, e il
+    bootstrap mensile raggrupperebbe i trade nei mesi sbagliati.
+    """
+    return run_walkforward(spec, q, raw, bounds, cfg)
 
 
 def main():
