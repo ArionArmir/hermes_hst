@@ -43,9 +43,15 @@ def attach_metrics(candles: pd.DataFrame, metrics: pd.DataFrame) -> pd.DataFrame
     create_time <= T. Mai in avanti - uno snapshot successivo alla chiusura
     sarebbe lookahead. Tolleranza 2h, oltre: NaN (dichiarato nel pre-registro).
     """
+    sinistra = candles.reset_index().rename(
+        columns={candles.index.name or "index": "timestamp"})
+    destra = metrics[["create_time", *METRIC_COLS]].copy()
+    # I parquet arrivano con risoluzioni diverse (candele in ms, metrics in
+    # us) e merge_asof rifiuta chiavi di dtype diverso: si normalizza a ns
+    sinistra["timestamp"] = sinistra["timestamp"].astype("datetime64[ns]")
+    destra["create_time"] = destra["create_time"].astype("datetime64[ns]")
     out = pd.merge_asof(
-        candles.reset_index().rename(columns={candles.index.name or "index": "timestamp"}),
-        metrics[["create_time", *METRIC_COLS]],
+        sinistra, destra,
         left_on="timestamp", right_on="create_time",
         direction="backward", tolerance=TOLLERANZA,
     ).drop(columns="create_time").set_index("timestamp")
@@ -65,7 +71,11 @@ def compute_positioning_features(df: pd.DataFrame) -> pd.DataFrame:
     out["oi_ratio_20"] = oi / (oi.rolling(20).mean() + 1e-12)
     out["lsr_ratio_20"] = lsr / (lsr.rolling(20).mean() + 1e-12)
     out["taker_lsr_ratio_20"] = tak / (tak.rolling(20).mean() + 1e-12)
-    return out
+    # OI a zero nei tratti iniziali di alcuni simboli: pct_change su uno zero
+    # da' inf e il rapporto con epsilon esplode a ~1e12 — XGBoost rifiuta
+    # entrambi. NaN, che il dropna a valle esclude: righe scartate, mai
+    # valori inventati.
+    return out.where(out.abs() < 1e6)
 
 
 def compute_features_with_positioning(df: pd.DataFrame) -> pd.DataFrame:

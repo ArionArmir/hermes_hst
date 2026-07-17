@@ -143,12 +143,49 @@ Famiglia `positioning_v1`. Ogni run, anche perdente. **Conteggio: 125 + 4 =
 
 ---
 
-## Esito
+## Esito — 2026-07-17, ~3.5 minuti di calcolo
 
-*Da compilare a run concluso.*
+- **Validazione intersezione**: 4.62 anni (gate emendato ≥ 4.5: superato).
+  40.431 barre comuni, 2021-12-01 → 2026-07-16.
+- **Run completati**: 4 / 4
+- **H7a — coppie vinte dal positioning: 1 / 2 → FALSIFICATA**
+- **H7b — FALSIFICATA** su ogni criterio (tranne la concentrazione)
+- **Holdout**: **NON aperto.** Lotti A e B sigillati.
 
-- [ ] Validazione intersezione: __ anni (richiesti ≥ 5)
-- [ ] Run completati: __ / 4
-- [ ] H7a — coppie vinte dal positioning: __ / 2
-- [ ] H7b — primario (h10+pos): DSR __ · fold+ __ · IC95 __
-- [ ] Holdout aperto: no / lotto A
+| Config | Braccio | PnL | trade | fold+ | Sharpe/trade | IC95 bootstrap |
+|---|---|---|---|---|---|---|
+| h10 | baseline 18 | −307.38 | 1390 | 0/4 | −0.0312 | [−1000, +376] |
+| h10 | **positioning 22** | −132.18 | 1098 | 1/4 | **−0.0155** | [−653, +438] |
+| h5 | baseline 18 | −148.51 | 1727 | 2/4 | −0.0144 | [−706, +383] |
+| h5 | positioning 22 | −185.72 | 1446 | 2/4 | −0.0198 | [−692, +279] |
+
+### Lettura
+
+Il positioning "vince" su h10 (−0.0155 contro −0.0312) e perde su h5 (−0.0198
+contro −0.0144): **1/2, cioè una monetina**, e tutti e quattro i bracci sono
+negativi. L'informazione di posizionamento — OI e ratio long/short, la prima
+famiglia ortogonale al prezzo mai testata — **non crea un edge** dove il
+prezzo non ne trovava. Il prior dichiarato (H7-nulla) è confermato.
+
+Da notare che il baseline h10 su questa finestra (4.62 anni, 2021-12→2026-07)
+dà SR −0.0312 contro il −0.0170 della finestra breadth (5.56 anni): coerente
+con "nessun edge, solo rumore attorno a zero" — il numero balla col periodo,
+come deve.
+
+### Nota sul conteggio
+
+Il registro riporta **5** tentativi per `positioning_v1` invece dei 4
+dichiarati: due run sono crashati a metà (dtype dei timestamp, poi `inf` da OI
+a zero) e il baseline h10 completato prima del secondo crash è stato
+registrato due volte. Il sovraconteggio è conservativo (alza l'asticella) e si
+lascia agli atti. **Totale registro: 131.**
+
+### Cosa resta sulla dimensione feature
+
+- **funding rate** — l'asterisco aperto dall'analisi metodologica: storia
+  profonda via API (verificata dal 2020) e dump mensili. Mai testato.
+- **bookDepth** — profondità ±1-5% dal 2023-01: ~3.5 anni, finestra più corta
+  ma informazione di microstruttura vera (imbalance).
+
+Ciascuno richiede un pre-registro proprio. Nessun altro dato con storia utile
+esiste gratis; oltre, si compra (CoinGlass/Tardis) o si registra da oggi.

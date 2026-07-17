@@ -94,6 +94,31 @@ def test_braccio_positioning_ha_22_colonne_e_include_le_18_base():
     assert set(POSITIONING_COLS) <= set(tutte.columns)
 
 
+def test_risoluzioni_timestamp_diverse_non_rompono_il_merge():
+    """I parquet reali arrivano con risoluzioni diverse (candele ms, metrics
+    us) e merge_asof rifiuta chiavi di dtype diverso: il primo run e' crashato
+    esattamente qui. Il test in memoria non lo vedeva (entrambi ns)."""
+    candles = _candles(3)
+    candles.index = candles.index.astype("datetime64[ms]")
+    m = _metrics(["2024-01-01 00:55"], [100.0])
+    m["create_time"] = m["create_time"].astype("datetime64[us]")
+    out = attach_metrics(candles, m)
+    assert out.loc["2024-01-01 01:00", "sum_open_interest"] == 100.0
+
+
+def test_oi_a_zero_non_produce_infiniti():
+    """Alcuni simboli hanno OI = 0 nei tratti iniziali: pct_change su uno zero
+    da' inf e il rapporto con epsilon esplode a ~1e12. XGBoost rifiuta
+    entrambi (il run reale e' crashato qui). Devono diventare NaN."""
+    candles = _candles(30)
+    times = pd.date_range("2024-01-01", periods=30, freq="1h")
+    oi = np.concatenate([np.zeros(10), np.linspace(100, 130, 20)])
+    out = attach_metrics(candles, _metrics(times, oi))
+    feats = compute_positioning_features(out)
+    assert np.isfinite(feats.to_numpy()[~np.isnan(feats.to_numpy())]).all()
+    assert feats["oi_change_1"].iloc[-1] > 0        # la parte sana sopravvive
+
+
 def test_metrics_mancanti_producono_righe_scartabili_non_errori():
     """Simboli o periodi senza metrics: NaN che il dropna a valle esclude,
     senza far saltare il run degli altri."""

@@ -1,0 +1,5 @@
+horizon,braccio,pnl_totale,worst_fold,fold_positivi,n_trade,sharpe_trade,dsr,quota_simbolo_top,simbolo_top,ic95_basso,ic95_alto,p_perdita
+10,baseline_18,-307.38,-136.94,0,1390,-0.0312,0.0,0.15,KAVAUSDT,-999.9,375.6,0.8162
+10,positioning_22,-132.18,-156.48,1,1098,-0.0155,0.0001,0.166,SKLUSDT,-652.9,437.7,0.7001
+5,baseline_18,-148.51,-163.93,2,1727,-0.0144,0.0001,0.138,BELUSDT,-705.7,382.7,0.7013
+5,positioning_22,-185.72,-150.83,2,1446,-0.0198,0.0001,0.182,BELUSDT,-691.5,279.1,0.7679
