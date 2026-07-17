@@ -78,10 +78,33 @@ Nessuna variante verrà provata: queste quattro, così definite, o niente.
 
 ## Validazione obbligatoria prima del run
 
-Come per breadth: intersezione (candele ∩ metrics) sui 47 simboli **≥ 5
+Come per breadth: intersezione (candele ∩ metrics) sui 47 simboli **≥ 4.5
 anni**, altrimenti **STOP** e diagnosi esplicita. I metrics possono avere
 buchi o partire in ritardo su alcuni simboli: meglio fermarsi che misurare su
 una finestra silenziosamente diversa da quella dichiarata.
+
+> **Emendamento del 2026-07-17, autorizzato, prima di qualsiasi risultato.**
+> Il gate originale era ≥ 5 anni, derivato dall'affermazione "metrics dal
+> 2020-09-01: copertura completa". Quella affermazione era stata verificata su
+> **un solo simbolo** (BTCUSDT) e generalizzata ai 47 — la sesta occorrenza
+> della stessa classe di errore (assumere invece di verificare). Realtà,
+> misurata a download completo: **solo BTCUSDT ha il backfill dal 2020-09**;
+> Binance pubblica i dump metrics per tutti gli altri dal **2021-12-01**.
+> Finestra reale: **4.62 anni** (2021-12-01 → 2026-07-16).
+>
+> Il gate è emendato a 4.5 anni perché il valore 5 era strumentale
+> all'aspettativa di finestra, non un principio: 4.62 anni × 47 simboli sono
+> ~1.9M barre, quasi 5× il dataset storico originale. Il gate ha fermato il
+> run **prima che un solo modello venisse addestrato**: nessun risultato è
+> stato visto, l'emendamento è legittimo (stessa forma della correzione
+> 38→47 nel pre-registro breadth).
+>
+> **Conseguenza dichiarata**: i fold di test coprono ~2023-09 → 2026-07,
+> diversi dalla finestra degli esperimenti precedenti. I confronti *interni*
+> alle coppie (baseline vs positioning, stessi fold) restano pienamente
+> validi — è il disegno appaiato a proteggerli. I confronti con i numeri
+> storici (es. SR −0.0170 di breadth su U47) diventano solo indicativi:
+> il baseline viene rimisurato apposta dentro questo esperimento.
 
 ---
 

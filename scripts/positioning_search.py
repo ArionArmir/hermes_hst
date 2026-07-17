@@ -40,7 +40,7 @@ Q = 0.01
 ORIZZONTI = (10, 5)                # h10 primaria, h5 coppia di controllo
 DSR_MIN = 0.90
 MAX_QUOTA_SIMBOLO = 0.60
-ANNI_MINIMI = 5.0
+ANNI_MINIMI = 4.5
 
 OUT = Path(__file__).parent.parent / "docs" / "positioning_results.csv"
 

@@ -34,7 +34,7 @@ S3 = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 BASE = "https://data.binance.vision/"
 OUT_DIR = Path(__file__).parent.parent / "data" / "metrics"
 WORKERS = 16
-ANNI_MINIMI = 5.0
+ANNI_MINIMI = 4.5
 
 KEEP = ["create_time", "sum_open_interest", "count_long_short_ratio",
         "sum_taker_long_short_vol_ratio"]
