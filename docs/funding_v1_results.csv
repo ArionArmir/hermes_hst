@@ -1,0 +1,5 @@
+horizon,braccio,pnl_totale,worst_fold,fold_positivi,n_trade,sharpe_trade,dsr,quota_simbolo_top,simbolo_top,ic95_basso,ic95_alto,p_perdita
+10,baseline_18,-489.74,-205.61,1,1177,-0.0614,0.0,0.171,GRTUSDT,-1024.3,32.9,0.9659
+10,funding_20,-244.01,-155.69,1,1989,-0.0173,0.0,0.138,FILUSDT,-788.7,321.2,0.8077
+5,baseline_18,-441.37,-199.63,1,2256,-0.034,0.0,0.159,RSRUSDT,-933.3,28.2,0.9672
+5,funding_20,-610.55,-190.29,0,1682,-0.0597,0.0,0.185,SKLUSDT,-986.2,-253.8,0.9999

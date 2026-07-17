@@ -108,11 +108,39 @@ conservativo). **Conteggio atteso a fine serie: 139.**
 
 ---
 
-## Esito
+## Esito — 2026-07-17/18
 
-*Da compilare a run conclusi.*
+- **Funding** — gate 5.51 anni ✅ · coppie vinte **1/2 → FALSIFICATA** ·
+  primario h10+funding: DSR 0.0%, 1/4 fold, IC95 [−789, +321] → **H-nulla**
+- **bookDepth** — gate 3.54 anni ✅ · coppie vinte **1/2 → FALSIFICATA** ·
+  primario h10+bookdepth: DSR 0.0%, 1/4 fold, IC95 [−713, +208] → **H-nulla**
+- **Holdout**: NON aperto. Lotti A e B sigillati.
+- **Dimensione feature: CHIUSA senza asterischi gratuiti.**
 
-- [ ] Funding — gate: __ anni · coppie vinte: __ /2 · primario: __
-- [ ] bookDepth — gate: __ anni · coppie vinte: __ /2 · primario: __
-- [ ] Holdout aperto: no / lotto A
-- [ ] Dimensione feature: chiusa senza asterischi sì/no
+| Famiglia | Config | Baseline SR | Arricchito SR | Vincitore |
+|---|---|---|---|---|
+| funding (5.51y) | h10 | −0.0614 | −0.0173 | funding |
+| funding | h5 | −0.0340 | −0.0597 | baseline |
+| bookdepth (3.54y) | h10 | −0.0399 | −0.0361 | bookdepth |
+| bookdepth | h5 | −0.0654 | −0.0912 | baseline |
+
+Il pattern è identico in tutte e tre le chiusure (positioning, funding,
+bookdepth): l'arricchito vince su h10, perde su h5, **1/2 = monetina**, e
+tutti i bracci sono negativi. Tre famiglie di informazione ortogonale al
+prezzo — posizionamento, funding, microstruttura — e nessuna crea un edge
+dove il prezzo non ne trovava. Nota: entrambi i baseline h5 di questa serie
+hanno IC95 interamente negativo ([−766, −70] e [−814, −170]): a orizzonte
+corto la strategia perde in modo statisticamente significativo, coerente con
+"i costi dominano".
+
+### Bilancio della dimensione feature (139 tentativi totali a registro)
+
+Testate per misura: 18 OHLCV+flow (base) · 4 order flow (order_flow_prereg) ·
+4 positioning (OI, long/short) · 2 funding · 2 bookDepth (±1%).
+Inaccessibili gratis: liquidazioni storiche orarie (CoinGlass ≥$299 non
+verificato), on-chain con API (≥$999/mese), order book tick-level (Tardis).
+
+La frase finale della ricerca storica non cambia, ma ora copre tutto il
+gratuito: **questi dati — prezzo, volume, flusso, posizionamento, funding,
+profondità — non contengono un edge direzionale dimostrabile a orizzonte
+orario con costi retail.**

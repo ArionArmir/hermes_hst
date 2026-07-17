@@ -1,0 +1,5 @@
+horizon,braccio,pnl_totale,worst_fold,fold_positivi,n_trade,sharpe_trade,dsr,quota_simbolo_top,simbolo_top,ic95_basso,ic95_alto,p_perdita
+10,baseline_18,-247.45,-207.1,1,816,-0.0399,0.0,0.132,QTUMUSDT,-735.8,200.1,0.8528
+10,bookdepth_20,-242.88,-153.79,1,870,-0.0361,0.0,0.224,TRBUSDT,-712.6,208.4,0.8466
+5,baseline_18,-400.83,-200.44,0,954,-0.0654,0.0,0.28,BELUSDT,-765.8,-70.2,0.993
+5,bookdepth_20,-495.28,-194.94,0,877,-0.0912,0.0,0.329,BELUSDT,-813.6,-170.0,0.9986
