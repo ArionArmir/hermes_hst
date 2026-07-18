@@ -112,11 +112,60 @@ Famiglia `basis_v1`. **Conteggio: 143 + 2 = 145.**
 
 ---
 
-## Esito
+## Esito — 2026-07-18
 
-*Da compilare a run concluso.*
+- **Gate**: 22 contratti scaduti per sottostante ✅ (23 trimestri di portafoglio)
+- **Primaria (always-roll)**: +4.81% netto ann. · IC95 **[−0.90%, +9.16%]**
+  (include lo zero) · DSR₂ 67.2% · trimestri+ 91% · conc. 59%
+- **Riga zero**: T-bill 3M medio del periodo **+3.41%** → eccesso **+1.40%**
+- **H9-nulla: NON promuovibile.** 2 criteri su 5 falliti (bootstrap e DSR).
 
-- [ ] Gate: __ trimestri chiusi (BTC __, ETH __)
-- [ ] Primaria — ann. netto: __ · IC95: __ · trimestri+: __ · vs T-bill: __
-- [ ] Spaccato annuale: __
-- [ ] Promuovibile: sì/no
+| Config | ann. netto | trim+ | IC95 | DSR₂ |
+|---|---|---|---|---|
+| **always-roll** (primaria) | +4.81% | 91% | **[−0.9%, +9.2%]** | 67.2% |
+| positive-only | +6.75% | 96% | [+4.2%, +9.6%] | 100% |
+
+Spaccato annuale della primaria: 2021 +11.55% · 2022 +1.63% · 2023 +7.30% ·
+2024 +13.19% · 2025 +4.15% · **2026 −10.12%** (3 trimestri).
+
+### Le due informazioni nuove
+
+**1. Nel 2026 il basis si è invertito (backwardation).** Non "compresso" come
+il funding: **negativo**. L'always-roll ha shortato future sotto lo spot,
+bloccando perdite per −10.12% in tre trimestri. È un'informazione di regime
+più forte di quella del carry: la domanda di leva long, vista dallo strumento
+a termine, non è solo magra — nel 2026 ha cambiato segno.
+
+**2. L'eccesso sul T-bill è +1.40% sull'intera storia.** La riga zero fa il
+suo lavoro: anche nella media 5.5 anni (che include il 2021 euforico), il
+premio per il rischio exchange/margine rispetto al tasso privo di rischio è
+sottile. Nel regime recente è negativo.
+
+### La nota metodologica — e la disciplina che si applica
+
+La `positive-only` **passa numericamente tutti i criteri** (IC95 [+4.2%,
++9.6%], DSR₂ 100%). Ed era pre-dichiarata, con una regola che usa solo
+informazione disponibile all'entrata (il basis si legge prima di entrare: non
+è predizione). **Ma la promozione era dichiarata sulla sola primaria, e la
+primaria è bocciata.** Promuovere ora la secondaria perché "è andata meglio"
+sarebbe selezione a posteriori — la mossa che l'impianto vieta; e
+ri-registrarla come nuova primaria sugli stessi dati, dopo averne visto
+l'esito, sarebbe la stessa mossa con un timbro sopra.
+
+Ciò che la positive-only *dice* legittimamente, come descrittivo: il
+meccanismo di convergenza funziona quando il basis d'entrata è positivo (96%
+di trimestri positivi) — coerente con la natura contrattuale del gioco.
+Un'eventuale decisione operativa su di essa richiederebbe **validazione in
+avanti** (paper trading), non un altro giro sugli stessi 23 trimestri.
+
+### Conferma del prior
+
+"Gemello del carry" confermato: forte 2021/2024, magro 2025, negativo 2026.
+Funding e basis — la stessa domanda di leva vista da due strumenti — ora
+raccontano la stessa storia con **due misure indipendenti**: il premio che i
+long a leva pagavano nel 2021-2024 si è compresso fino, nel 2026, a
+invertirsi.
+
+## Registro
+
+`basis_v1`: 2 tentativi. **Totale: 145.**
