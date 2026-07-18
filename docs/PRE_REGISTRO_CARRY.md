@@ -141,11 +141,66 @@ Famiglia `carry_v1`. Ogni configurazione, anche perdente.
 
 ---
 
-## Esito
+## Esito — 2026-07-18
 
-*Da compilare a run concluso.*
+- **Gate**: 5.51 anni × 46 simboli ✅ (2020-12-25 → 2026-06-30; 1 simbolo
+  escluso per regola: storia spot+funding+perp < 5 anni)
+- **Primaria (W30/all-positive)**: **+10.32% netto annualizzato** · Sharpe
+  1.55 · mesi positivi 80% · IC95 **[+5.63%, +16.48%]** · DSR famiglia
+  **100.0%** · concentrazione **3%** (ZEN)
+- **Benchmark incondizionato**: +5.79% annuo — il flusso esiste anche senza
+  selezione; la selezione lo raddoppia quasi
+- **Tutti e 5 i criteri: SUPERATI. Primo candidato promosso in 143 tentativi.**
+- DSR cumulativo N=143 (riportato, non vincolante): 85.6%
 
-- [ ] Gate: __ anni × __ simboli
-- [ ] Primaria — ann. netto: __ · IC95: __ · mesi+: __ · conc.: __
-- [ ] Benchmark incondizionato (descrittivo): __
-- [ ] Promuovibile: sì/no
+| Config | ann. netto | Sharpe | mesi+ | IC95 | DSR₄ |
+|---|---|---|---|---|---|
+| **W30 all-positive** | **+10.32%** | **1.55** | 80% | [+5.6%, +16.5%] | 100% |
+| W30 top-10 | +10.62% | 1.36 | 83% | [+5.1%, +17.9%] | 100% |
+| W7 all-positive | +9.24% | 1.32 | 73% | [+4.2%, +15.6%] | 99.8% |
+| W7 top-10 | +6.84% | 0.80 | 52% | [+0.8%, +14.7%] | 64.5% |
+
+Firma di robustezza opposta a quella del +244 direzionale: **altopiano, non
+picco** (3 config su 4 sopra il 9%), concentrazione 3% contro l'87% di
+DOGE+SOL, Sharpe 1.55 dentro la banda dei carry reali (0.8-1.5) e non 4x
+sopra.
+
+### La seconda verità — il rischio dichiarato si è materializzato nei dati
+
+Spaccato per anno della primaria (descrittivo):
+
+| anno | netto | mesi+ |
+|---|---|---|
+| 2021 | **+35.49%** | 92% |
+| 2022 | +0.38% | 58% |
+| 2023 | +6.49% | 100% |
+| 2024 | +13.05% | 100% |
+| 2025 | +1.89% | 67% |
+| 2026 (6 mesi) | **−0.53%** | 50% |
+
+Il pre-registro dichiarava due rischi: *concentrazione temporale nei bull
+euforici* e *compressione futura del rendimento*. Sono entrambi nella
+tabella: **un terzo del rendimento totale viene dal solo 2021**, e gli ultimi
+18 mesi fanno **~+1.4% cumulato** — sotto la soglia operativa del +3% annuo.
+Il peggior mese in 5.5 anni è −1.07% (rischio bassissimo, coerente col
+delta-neutro), ma il flusso attuale è compresso.
+
+### Lettura onesta
+
+Il carry **funziona come struttura** — il meccanismo è reale, diffuso su ~40
+simboli, con drawdown trascurabili — ma **il regime corrente rende ~0-2%
+netto**, non il +10% della media storica. Chi entrasse oggi aspettandosi il
+numero del backtest ripeterebbe, in forma mite, l'errore del +244: scambiare
+la media di una finestra fortunata per l'aspettativa corrente.
+
+**Non aggiungere ora un "filtro di regime"** (es. attivarsi solo quando il
+funding trailing è ricco): sarebbe una regola scelta guardando questo
+spaccato — la mossa che l'intero impianto vieta. Se la si vuole, è un nuovo
+pre-registro.
+
+### Stato
+
+Promosso dai criteri pre-registrati; **holdout NON aperto** e **nessun
+go-live**: entrambi restano atti separati e deliberati. La decisione
+operativa (se e quanto capitale, con quale aspettativa) spetta all'utente,
+con il regime 2025-26 come riferimento prudente.

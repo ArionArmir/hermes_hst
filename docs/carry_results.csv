@@ -1,0 +1,5 @@
+W,regola,mesi,annualizzato_netto,sharpe_ann,mesi_positivi,ic95_basso,ic95_alto,dsr_famiglia,dsr_cumulativo,concentrazione,simbolo_top
+30,all-positive,66,0.1032,1.55,0.803,0.0563,0.1648,1.0,0.8561,0.034,ZENUSDT
+30,top-10,66,0.1062,1.36,0.833,0.0513,0.1789,0.9999,0.5329,0.076,EGLDUSDT
+7,all-positive,66,0.0924,1.32,0.727,0.0424,0.1562,0.998,0.458,0.034,ZENUSDT
+7,top-10,66,0.0684,0.8,0.515,0.0083,0.1472,0.6447,0.0144,0.067,ZENUSDT
