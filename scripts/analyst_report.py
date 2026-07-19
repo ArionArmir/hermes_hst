@@ -89,6 +89,32 @@ def main():
     print(f"  ultimi 3 mesi: {st.ret_3m:+.1%} | ultimi 12 mesi: {st.ret_12m:+.1%}")
     print("  (numeri descrittivi: nessuno di questi contiene informazione sul mese prossimo)")
 
+    # ---- 4bis. semaforo del carry (descrittivo, fase 1 studio medio termine)
+    sezione("SEMAFORO DEL CARRY — strategia promossa, dormiente (descrittivo)")
+    from src.research.carry_monitor import (STORICO_CARRY, basis_corrente,
+                                            fascia_regime, funding_corrente,
+                                            percentile_storico)
+    fc = funding_corrente()
+    if fc:
+        fascia, nota = fascia_regime(fc["mediana"])
+        pct = percentile_storico(fc["mediana"])
+        print(f"  funding mediano 30gg (annualizzato): {fc['mediana']:+.1%} "
+              f"| positivo su {fc['positivi']}/{fc['totale']} simboli")
+        print(f"  regime: {fascia} — {nota}")
+        if pct is not None:
+            print(f"  percentile storico (2020-2026): {pct:.0%}")
+    else:
+        print("  funding live non disponibile (API irraggiungibile)")
+    bc = basis_corrente()
+    if bc:
+        for sott, b in bc.items():
+            print(f"  basis {sott} trimestrale ({b['simbolo']}, {b['giorni']:.0f}gg): "
+                  f"{b['basis_annuo']:+.1%} annuo")
+    print("  riferimento (carry_v1, netto/anno): " +
+          " | ".join(f"{k} {v:+.1%}" for k, v in STORICO_CARRY.items()))
+    print("  NB: pannello descrittivo. L'eventuale riattivazione del carry "
+          "richiede un pre-registro proprio.")
+
     # ---- 4. eco dell'IPS ---------------------------------------------------
     sezione("4 · ECO DEL TUO IPS")
     if st.drawdown <= -0.15:
