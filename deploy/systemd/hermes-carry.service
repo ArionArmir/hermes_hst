@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes HFT - Carry Paper Executor
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python -m src.carry.main
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

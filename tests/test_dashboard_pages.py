@@ -59,3 +59,13 @@ def test_load_trades_falls_back_to_csv(monkeypatch, tmp_path):
 
     assert len(df) == 1
     assert df.iloc[0]["reason"] == "LEGACY"
+
+
+def test_pagine_carry_e_forward_renderizzano():
+    """Le due pagine nuove devono reggere anche senza dati (stato assente,
+    telemetria vuota): gli stati 'nessun dato' sono parte del contratto."""
+    for pagina in ("carry.py", "forward.py"):
+        at = AppTest.from_file(str(REPO / "dashboard" / "app_pages" / pagina),
+                               default_timeout=60)
+        at.run()
+        assert not at.exception, f"{pagina}: {at.exception}"
