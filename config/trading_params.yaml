@@ -23,7 +23,7 @@ timeframe: 1h
 # UNICO regolatore di selettività dei segnali (usato da inference/policy,
 # engine e backtest). Tarato 2026-07-16 con tune_strategy.py su due finestre
 # out-of-sample; sopra 0.60 i segnali quasi spariscono.
-ml_confidence_threshold: 0.55
+ml_confidence_threshold: 0.50
 sentiment_weight: 0.3
 # Allineato all'orizzonte del target del modello: 5 candele × 1h.
 # Se cambi timeframe o TARGET_HORIZON_BARS, aggiorna anche questo.

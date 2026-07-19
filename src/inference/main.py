@@ -238,6 +238,26 @@ class MLInference:
                     proba = self.model.predict_proba(features)[0]
                     action, prob = self._signal_from_proba(proba)
 
+                    # Telemetria di confidenza: OGNI valutazione, anche sotto
+                    # soglia. L'inference pubblica segnali solo sopra soglia,
+                    # quindi senza questa chiave "zero trade" e' indistinguibile
+                    # da "zero valutazioni": qui si vede quanto ci si e' andati
+                    # vicini, per simbolo, senza toccare la selettivita'.
+                    conf = float(max(proba[TARGET_DOWN], proba[TARGET_UP]))
+                    tele_key = f"ml_conf_{symbol.upper()}"
+                    prev = await self.redis.get_json(tele_key) or {}
+                    oggi = datetime.now(timezone.utc).date().isoformat()
+                    max_oggi = max(conf, prev.get("max_oggi", 0.0)
+                                   if prev.get("giorno") == oggi else 0.0)
+                    await self.redis.set(tele_key, {
+                        "p_down": round(float(proba[TARGET_DOWN]), 4),
+                        "p_up": round(float(proba[TARGET_UP]), 4),
+                        "conf": round(conf, 4),
+                        "max_oggi": round(max_oggi, 4),
+                        "giorno": oggi,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    })
+
                     # Non inviare segnali "hold" per non inquinare i log
                     if action == "hold":
                         continue
