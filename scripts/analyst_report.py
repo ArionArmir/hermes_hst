@@ -112,8 +112,17 @@ def main():
                   f"{b['basis_annuo']:+.1%} annuo")
     print("  riferimento (carry_v1, netto/anno): " +
           " | ".join(f"{k} {v:+.1%}" for k, v in STORICO_CARRY.items()))
+    stato_paper = Path(__file__).parent.parent / "data" / "carry_paper" / "state.json"
+    if stato_paper.exists():
+        import json
+        sp = json.loads(stato_paper.read_text())
+        aperto = sum(p["funding_incassato"] for p in sp["posizioni"].values())
+        print(f"  paper executor: {len(sp['posizioni'])} posizioni | funding "
+              f"incassato {sp['funding_totale']:+.2f} | PnL realizzato "
+              f"{sp['pnl_realizzato']:+.2f} | costi {sp['costi_pagati']:.2f} "
+              f"(USDT di carta, da {sp['avvio'][:10]})")
     print("  NB: pannello descrittivo. L'eventuale riattivazione del carry "
-          "richiede un pre-registro proprio.")
+          "richiede un pre-registro proprio (docs/PROTOCOLLO_RIATTIVAZIONE_CARRY.md).")
 
     # ---- 4. eco dell'IPS ---------------------------------------------------
     sezione("4 · ECO DEL TUO IPS")
