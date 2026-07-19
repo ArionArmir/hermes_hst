@@ -39,11 +39,13 @@ CHECKS = {
     "engine": {"key": "heartbeat_engine", "stale_after": 120},
     "inference": {"key": "heartbeat_inference", "stale_after": 120},
     "sentiment": {"key": "heartbeat_sentiment", "stale_after": 120},
+    "carry": {"key": "heartbeat_carry", "stale_after": 7800},
+    "liquidations": {"key": "heartbeat_liquidations", "stale_after": 400},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},
     "candele": {"key": "candle_feed_last_success", "stale_after": 900},
 }
-RESTARTABLE = ("engine", "inference", "sentiment")
+RESTARTABLE = ("engine", "inference", "sentiment", "carry", "liquidations")
 ALERT_STATE_KEY = "watchdog_alerted"
 REDIS_DOWN_MARKER = REPO_ROOT / "logs" / ".watchdog_redis_down"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"

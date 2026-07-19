@@ -9,7 +9,7 @@ from typing import Optional
 import redis
 import streamlit as st
 
-HEARTBEAT_SERVICES = ("engine", "inference", "sentiment")
+HEARTBEAT_SERVICES = ("engine", "inference", "sentiment", "carry", "liquidations")
 
 
 @st.cache_resource
