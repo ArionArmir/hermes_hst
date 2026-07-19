@@ -30,7 +30,9 @@ SPOT = _ROOT / "data" / "spot"
 _UA = {"User-Agent": "Mozilla/5.0"}
 
 # ticker Yahoo per gli asset non-crypto
-YAHOO = {"SPX": "%5EGSPC", "EURUSD": "EURUSD%3DX"}
+YAHOO = {"SPX": "%5EGSPC", "EURUSD": "EURUSD%3DX", "VWCE": "VWCE.DE"}
+# quotati gia' in EUR: nessuna conversione col cambio
+EUR_NATIVI = {"VWCE"}
 
 
 def _fetch_yahoo_monthly(symbol: str, strict: bool = True) -> pd.Series:
@@ -91,7 +93,7 @@ def load_asset_monthly(name: str, in_eur: bool = True) -> pd.Series:
         px = pd.read_parquet(SPOT / f"{name}_1h.parquet").set_index("timestamp")["close"]
         s = px.groupby(px.index.to_period("M")).last().rename(name)
 
-    if in_eur and name != "EURUSD":
+    if in_eur and name != "EURUSD" and name not in EUR_NATIVI:
         fx = load_asset_monthly("EURUSD", in_eur=False)
         comuni = s.index.intersection(fx.index)
         s = s.loc[comuni] / fx.loc[comuni]      # da USD a EUR
