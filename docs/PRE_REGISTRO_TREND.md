@@ -52,6 +52,25 @@ Ogni config in `trend_v1`. **Conteggio: 148 + 3 = 151.**
 
 ---
 
-## Esito — 2026-07-19
+## Esito — 2026-07-19: PRIOR CONFERMATO, con significatività
 
-*Compilato a run concluso (sotto).*
+41.6 anni di dati (1985-2026). Buy&hold netto: **×31.0** (CAGR 8.61%), maxDD −53%.
+
+| SMA | finale netto | CAGR | maxDD | investito | switch | tasse pagate | IC95 diff mensile ann. |
+|---|---|---|---|---|---|---|---|
+| **10 (primaria)** | **×12.1** | 6.18% | −27% | 75% | 59 | ×3.65 | **[−6.8%, −0.1%]** |
+| 6 | ×8.5 | 5.29% | −26% | 72% | 95 | ×2.42 | [−7.7%, −0.9%] |
+| 12 | ×14.5 | 6.65% | −28% | 76% | 49 | ×4.48 | [−6.0%, +0.3%] |
+
+**La primaria non solo perde: perde in modo statisticamente significativo**
+(IC95 della differenza interamente sotto lo zero). E la simulazione era
+GENEROSA verso il timing (compensazione minusvalenze ammessa, dividendi
+esclusi): il verdetto è a fortiori.
+
+La lettura completa: la protezione è REALE — drawdown dimezzato (−27% contro
+−53%) — ma costa **19 multipli di ricchezza finale** (×12 contro ×31), di cui
+una parte enorme in tasse: la strategia paga 3.65× il capitale iniziale di
+sole imposte, contro il differimento del buy&hold. L'assicurazione più cara
+mai misurata da questa piattaforma. Il modo giusto di ridurre i drawdown
+resta la TAGLIA (gratis), non il timing: è la conferma numerica della scelta
+dell'IPS.

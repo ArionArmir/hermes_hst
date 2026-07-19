@@ -43,6 +43,15 @@ Ogni config in `momentum_crypto_v1`. **Conteggio: 151 + 3 = 154.**
 
 ---
 
-## Esito — 2026-07-19
+## Esito — 2026-07-19: H-NULLA CONFERMATA
 
-*Compilato a run concluso (sotto).*
+| lookback | top-10 /anno | tutti /anno | diff | IC95 diff | ricambio |
+|---|---|---|---|---|---|
+| **3m (primaria)** | +54.7% | +52.1% | **+2.5%** | **[−31%, +36%]** | 39% |
+| 1m | +52.2% | +57.8% | −5.5% | [−36%, +25%] | 72% |
+| 6m | +60.9% | +58.8% | +2.1% | [−31%, +36%] | 27% |
+
+La differenza della primaria è +2.5%/anno dentro un intervallo di ±33 punti:
+**rumore puro**. La selezione momentum non aggiunge nulla al tenere tutto —
+e ruota il 39% del portafoglio ogni mese per non aggiungerlo. L'ultima
+famiglia di anomalie testabile gratis è chiusa per misura.

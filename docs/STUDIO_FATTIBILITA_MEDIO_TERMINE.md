@@ -133,4 +133,13 @@ probabile resta il carry, e la fase 1 è la sveglia che aspetta il suo regime.
 
 *Da compilare a piano concluso.*
 
-- [ ] Fase 1: __ · Fase 2: __ · Fase 3: __
+- [x] Fase 1: semaforo del carry live nel rapporto (prima lettura: regime
+  NELLA NORMA al 31° percentile, in risalita dal fondo 2026H1)
+- [x] Fase 2: Faber PERDE con significatività al netto delle tasse italiane
+  (IC95 [−6.8%, −0.1%]) — l'IPS è blindato con numeri
+- [x] Fase 3: momentum crypto H-nulla (diff +2.5% in IC ±33 punti)
+
+**Verdetto dello studio**: il medio termine onesto per questa piattaforma è
+UNO — il carry strutturale, monitorato dal semaforo, in attesa del suo
+regime. Le porte del timing e della selezione a frequenza media sono chiuse
+per misura. Registro: 154 tentativi.
