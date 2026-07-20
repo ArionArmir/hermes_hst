@@ -41,6 +41,10 @@ CHECKS = {
     "sentiment": {"key": "heartbeat_sentiment", "stale_after": 120},
     "carry": {"key": "heartbeat_carry", "stale_after": 7800},
     "liquidations": {"key": "heartbeat_liquidations", "stale_after": 400},
+    # Heartbeat ≠ dati: il 2026-07-19 lo stream forceOrder è rimasto muto 11
+    # ore (migrazione endpoint Binance) col heartbeat verde. Le liquidazioni
+    # market-wide non stanno mai ferme un'ora: silenzio = stream rotto.
+    "eventi liquidazioni": {"key": "last_liquidation_event", "stale_after": 3600},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},
     "candele": {"key": "candle_feed_last_success", "stale_after": 900},

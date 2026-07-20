@@ -55,6 +55,13 @@ def test_restart_non_duplica(tmp_path):
     assert len(df) == 1
 
 
+def test_ws_url_usa_endpoint_instradato():
+    """Gli URL legacy senza /market accettano la sottoscrizione ma non
+    spingono forceOrder: un ritorno al vecchio URL fallirebbe in silenzio."""
+    from src.liquidations import main
+    assert "/market/ws/" in main.WS_URL
+
+
 def test_max_righe_chiede_flush(tmp_path):
     b = BufferGiornaliero(out_dir=tmp_path, max_righe=2)
     assert not b.aggiungi(normalizza(PAYLOAD))
