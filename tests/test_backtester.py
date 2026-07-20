@@ -45,6 +45,9 @@ def _flat_candles(n=100, price=100.0, volume=10.0) -> pd.DataFrame:
         "low": [c - 0.1 for c in closes],
         "close": closes,
         "volume": [volume] * n,
+        # Order flow costante: neutro, non altera gli scenari deterministici
+        "taker_buy_base": [volume * 0.5] * n,
+        "n_trades": [100.0] * n,
     })
 
 

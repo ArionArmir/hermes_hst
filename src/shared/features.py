@@ -15,6 +15,14 @@ Regole per aggiungere una feature:
 - deve dipendere solo da finestre rolling, mai dalla lunghezza totale del
   DataFrame (in training arriva ~1 anno di candele, in inference ~200:
   una cumsum non finestrata, ad es., cambierebbe valore tra i due contesti).
+
+Lezione appresa (2026-07-16): aggiungere TRASFORMAZIONI degli stessi prezzi
+(feature di regime/calendario a orizzonte lungo) peggiora il modello — sono
+nuovi modi di overfittare, non nuova informazione. Le feature di order flow
+qui sotto funzionano perché sono informazione GENUINAMENTE NUOVA: chi ha
+comprato aggressivamente e quanto si è scambiato, dati non ricostruibili
+dall'OHLC. Validato con walk-forward su due strutture di fold indipendenti
+(fold peggiore da -24.9 a -6.1, trade invariati).
 """
 import numpy as np
 import pandas as pd
@@ -36,7 +44,17 @@ FEATURE_COLS = [
     'obv_ratio',
     'fib_position',
     'fib_618_distance',
+    # --- ORDER FLOW (microstruttura, non derivabile dall'OHLC) ---
+    'taker_buy_ratio',       # quota di volume comprata aggressivamente
+    'taker_ratio_20',        # pressione di flusso persistente
+    'trade_intensity',       # attività vs norma recente (la più informativa)
+    'avg_trade_size_ratio',  # taglia media dei trade: flusso "whale" vs retail
 ]
+
+# Colonne grezze richieste in input per l'order flow. Binance le restituisce
+# in ogni kline (campi 8 e 9) ma ccxt.fetch_ohlcv le scarta: per questo
+# src/data_collector.py usa il REST diretto.
+FLOW_INPUT_COLS = ('taker_buy_base', 'n_trades')
 
 # Finestra più lunga usata sotto è 50 (SMA50) + 1 per il diff dei returns;
 # 64 lascia margine. Sotto questa soglia l'ultima riga contiene NaN.
@@ -57,11 +75,23 @@ def timeframe_minutes(timeframe: str) -> int:
 
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcola le feature su candele OHLCV (colonne: open, high, low, close,
-    volume) di un singolo simbolo. Restituisce un DataFrame con le sole
-    colonne FEATURE_COLS, stesso indice dell'input, NaN nelle righe di
-    warmup: è il chiamante a decidere come gestirle (dropna in training,
-    scarto della riga in inference)."""
+    """Calcola le feature su candele di un singolo simbolo. Colonne richieste:
+    open, high, low, close, volume + taker_buy_base, n_trades (order flow).
+    Restituisce un DataFrame con le sole colonne FEATURE_COLS, stesso indice
+    dell'input, NaN nelle righe di warmup: è il chiamante a decidere come
+    gestirle (dropna in training, scarto della riga in inference)."""
+    missing = [c for c in FLOW_INPUT_COLS if c not in df.columns]
+    if missing:
+        # Fallire subito e a voce alta: un parquet salvato prima
+        # dell'order flow produrrebbe altrimenti feature NaN e righe
+        # silenziosamente scartate (o peggio, un modello addestrato su meno
+        # dati senza che nessuno se ne accorga).
+        raise ValueError(
+            f"Colonne di order flow mancanti: {missing}. Le candele devono venire da "
+            f"DataCollector/CandleFeed aggiornati (REST completo). Se il parquet è "
+            f"vecchio, rilanciare train_all_models.py per il ridownload automatico."
+        )
+
     close = df['close']
     high = df['high']
     low = df['low']
@@ -127,6 +157,24 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     out['fib_position'] = (close - low_20) / (diff_20 + 1e-9 * close)
     fib_618 = low_20 + 0.618 * diff_20
     out['fib_618_distance'] = (close - fib_618) / close
+
+    # --- ORDER FLOW ---
+    # Quota del volume comprata AGGRESSIVAMENTE (chi colpisce l'ask): 0-1,
+    # già adimensionale. ~0.5 = equilibrio tra compratori e venditori attivi.
+    taker_buy = df['taker_buy_base']
+    n_trades = df['n_trades']
+    taker_ratio = taker_buy / (volume + 1e-12)
+    out['taker_buy_ratio'] = taker_ratio
+    out['taker_ratio_20'] = taker_ratio.rolling(20).mean()
+
+    # Attività vs norma recente: rapporto → scale-invariant tra simboli
+    # (BTC fa ~300k trade/ora, TRX molti meno: conta lo scostamento, non il livello)
+    out['trade_intensity'] = n_trades / (n_trades.rolling(20).mean() + 1e-12)
+
+    # Taglia media dei trade rispetto alla propria norma: proxy di flusso
+    # istituzionale ("whale") vs frammentato (retail)
+    avg_trade_size = volume / (n_trades + 1e-12)
+    out['avg_trade_size_ratio'] = avg_trade_size / (avg_trade_size.rolling(20).mean() + 1e-12)
 
     return out[FEATURE_COLS]
 

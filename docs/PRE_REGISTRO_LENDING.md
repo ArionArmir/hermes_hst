@@ -85,11 +85,42 @@ Famiglia `lending_v1`. **Conteggio: 145 + 2 = 147.**
 
 ---
 
-## Esito
+## Esito — 2026-07-18
 
-*Da compilare a run concluso.*
+- **Gate**: 3.3 anni per asset ✅
+- **Primaria (USDT)**: lordo +4.44% · **eccesso sul T-bill −0.01%** · IC95
+  [−0.55%, +0.58%] · mesi+ 48% · DSR₂ 11.9%
+- USDC (controllo): lordo +4.73% · eccesso +0.28% · IC95 [−0.33%, +0.95%]
+- **H10-nulla: 4 criteri su 4 falliti.** Non promuovibile.
 
-- [ ] Gate: __ anni per asset
-- [ ] Primaria — eccesso ann.: __ · IC95: __ · mesi+: __
-- [ ] Spaccato annuale: __
-- [ ] Promuovibile: sì/no
+Spaccato annuale dell'eccesso (primaria): 2023 −0.82% · **2024 +1.25%** ·
+2025 −0.07% · 2026 −0.38%.
+
+### Lettura
+
+L'eccesso della primaria è **−0.01%: zero, letteralmente**. Il tasso di
+lending su Aave *è* il T-bill, trasmesso attraverso la DeFi, con il rischio
+protocollo e depeg sopra e nessun compenso per portarlo. L'arbitraggio che il
+prior prevedeva ha funzionato alla perfezione: quando i Treasury tokenizzati
+hanno reso il tasso privo di rischio accessibile on-chain, lo spread è stato
+schiacciato a zero.
+
+L'unico anno positivo è il 2024 (+1.25%): il bull, cioè la domanda di leva.
+
+### La terza misura indipendente — il quadro si chiude
+
+| Strumento | Cosa misura | Esito |
+|---|---|---|
+| Funding (carry_v1) | domanda di leva sui perpetual | compresso: ~0-2% nel 2025-26 |
+| Basis (basis_v1) | domanda di leva a termine | **invertito** nel 2026 |
+| Lending (lending_v1) | domanda di leva collateralizzata | eccesso **zero** sul T-bill |
+
+Tre strumenti diversi, tre dataset diversi, tre pre-registri indipendenti —
+**una sola grandezza sottostante**: il premio che i long a leva pagavano nel
+2021-2024. Nel 2026 quel premio è compresso, invertito o azzerato ovunque lo
+si misuri. I "rendimenti crypto" accessibili a un retail passivo sono, oggi,
+il T-bill con rischi in più.
+
+## Registro
+
+`lending_v1`: 2 tentativi. **Totale: 147.**

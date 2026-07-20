@@ -13,13 +13,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data_collector import DataCollector
+from src.data_collector import DataCollector, HISTORY_DAYS
 
 
 def _candles(start: str, n: int, volume: float = 1.0) -> pd.DataFrame:
     idx = pd.date_range(start, periods=n, freq="1h")
     return pd.DataFrame(
-        {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": volume},
+        {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": volume,
+         "taker_buy_base": volume * 0.5, "n_trades": 100.0},
         index=idx,
     ).rename_axis("timestamp")
 
@@ -71,7 +72,7 @@ def test_missing_parquet_triggers_full_download(monkeypatch, tmp_path):
     with patch.object(collector, "download_historical", return_value=full) as dl:
         df = collector.update_historical("BTC/USDT", "BTCUSDT")
 
-    dl.assert_called_once_with("BTC/USDT", "1h", days=365)
+    dl.assert_called_once_with("BTC/USDT", "1h", days=HISTORY_DAYS)
     assert len(df) == 48
     assert len(collector.load_historical("BTCUSDT")) == 48
 

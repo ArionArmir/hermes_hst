@@ -112,11 +112,15 @@ class CandleFeed:
             raw,
             columns=[
                 "open_time", "open", "high", "low", "close", "volume",
-                "close_time", "quote_volume", "trades",
+                "close_time", "quote_volume", "n_trades",
                 "taker_buy_base", "taker_buy_quote", "ignore",
             ],
         )
-        df = df[["open_time", "open", "high", "low", "close", "volume"]].astype(float)
+        # n_trades e taker_buy_base sono l'order flow: fino al 2026-07-16
+        # venivano scaricati e scartati qui. Sono l'unica informazione che ha
+        # superato il gate walk-forward (src/shared/features.py).
+        df = df[["open_time", "open", "high", "low", "close", "volume",
+                 "n_trades", "taker_buy_base"]].astype(float)
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         df = df.set_index("open_time")
 

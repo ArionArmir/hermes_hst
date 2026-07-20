@@ -32,12 +32,16 @@ def _synthetic_ohlcv(n: int = 1000, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
     spread = np.abs(rng.normal(0, 0.005, n)) * close
+    volume = rng.lognormal(3, 1, n)
     return pd.DataFrame({
         "open": close * (1 + rng.normal(0, 0.002, n)),
         "high": close + spread,
         "low": close - spread,
         "close": close,
-        "volume": rng.lognormal(3, 1, n),
+        "volume": volume,
+        # Order flow: taker buy ~metà del volume, n_trades proporzionale
+        "taker_buy_base": volume * rng.uniform(0.3, 0.7, n),
+        "n_trades": rng.integers(50, 500, n).astype(float),
     })
 
 
@@ -51,7 +55,12 @@ def test_features_are_scale_invariant():
     df = _synthetic_ohlcv()
     scaled = df.copy()
     scaled[["open", "high", "low", "close"]] *= 1000.0  # BTC vs TRX, in pratica
-    scaled["volume"] *= 500.0
+    # volume e taker_buy_base sono la STESSA unità (quantità di base asset):
+    # vanno scalati insieme, altrimenti il rapporto tra i due perde senso fisico
+    scaled[["volume", "taker_buy_base"]] *= 500.0
+    # n_trades è un conteggio: BTC ne ha ~300k/ora, TRX molti meno. Anche
+    # scalandolo, trade_intensity resta invariante (è rapporto sulla sua media)
+    scaled["n_trades"] *= 7.0
 
     original = compute_features(df).iloc[MIN_CANDLES:]
     rescaled = compute_features(scaled).iloc[MIN_CANDLES:]
