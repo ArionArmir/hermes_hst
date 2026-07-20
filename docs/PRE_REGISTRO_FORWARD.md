@@ -68,6 +68,31 @@ che accade qui.
 - [ ] eventuali ordini paper nello store posizioni
 - [ ] watchdog: nessun allarme
 
+## Registro incidenti
+
+**2026-07-20 — Deriva di configurazione (rientrata, impatto provato nullo).**
+Col riavvio della macchina del 2026-07-19 sera, Redis è ripartito da uno
+snapshot precedente al lancio del test: `ml_confidence_threshold` è tornato
+silenziosamente a 0.55 (il valore pre-esperimento) e il motore l'ha caricato
+al riavvio delle 20:57 — Redis vince sul YAML, che dichiarava 0.50.
+Scoperta il 2026-07-20 dall'operatore umano guardando la pagina
+Configurazione; nessun controllo automatico l'aveva vista (da qui il check
+"config drift" nel watchdog).
+
+Analisi di impatto: replay dell'intera finestra sospetta (2026-07-16 00:25 →
+2026-07-20 17:29 UTC) con stesse candele, stesse feature e stesso champion
+dell'inference, pipeline validata al quarto decimale contro la telemetria
+live `ml_conf_*`. **Confidenza massima vista: 0.4392.** Nessuna ora ha
+raggiunto 0.50 su nessuno dei 7 simboli: a soglia 0.50 o 0.55 il
+comportamento del sistema è stato identico per costruzione (zero segnali,
+zero trade in entrambi i mondi). Soglia 0.50 ripristinata e ricaricata da
+motore e inference il 2026-07-20 17:29.
+
+Decisione (umana, 2026-07-20): l'esperimento **continua** — la clausola
+punisce i cambi che possono alterare gli esiti, e questa deviazione è
+dimostrabilmente priva di effetti. L'incidente resta agli atti; la lettura
+finale dovrà citarlo.
+
 ## Esito
 
 *Da compilare SOLO alla data/soglia di lettura dichiarata.*

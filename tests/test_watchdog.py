@@ -175,3 +175,32 @@ def test_missing_champion_expectation_is_handled_gracefully():
     _insert_trades([-1.0] * 15 + [+0.5] * 5)
     problem = check_model_health(_FakeRedisGet({"champion_hit_rate": "not-a-number"}))
     assert problem is not None  # non deve sollevare, solo omettere il confronto
+
+
+def test_config_drift_rilevata():
+    """Il caso del 2026-07-20: Redis resuscita una soglia pre-esperimento
+    diversa dal YAML dichiarato — deve urlare, non tacere."""
+    import json
+    from watchdog import check_config_drift
+    client = MagicMock()
+    client.get.return_value = json.dumps(
+        {"ml_confidence_threshold": 0.55, "timeframe": "1h"})
+    finto_yaml = "ml_confidence_threshold: 0.50\ntimeframe: 1h\n"
+    with patch("builtins.open", create=True) as mock_open:
+        mock_open.return_value.__enter__.return_value.read = lambda: finto_yaml
+        with patch("yaml.safe_load", return_value={"ml_confidence_threshold": 0.50,
+                                                   "timeframe": "1h"}):
+            problema = check_config_drift(client)
+    assert problema and "ml_confidence_threshold" in problema
+
+
+def test_config_allineata_e_redis_vuoto_sono_sani():
+    import json
+    from watchdog import check_config_drift
+    client = MagicMock()
+    with patch("yaml.safe_load", return_value={"ml_confidence_threshold": 0.50}):
+        with patch("builtins.open", create=True):
+            client.get.return_value = json.dumps({"ml_confidence_threshold": 0.50})
+            assert check_config_drift(client) is None
+            client.get.return_value = None     # Redis vuoto: al boot vince il YAML
+            assert check_config_drift(client) is None

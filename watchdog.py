@@ -119,6 +119,33 @@ def check_ollama(base_url: Optional[str] = None) -> Optional[str]:
         return f"non raggiungibile ({url}): {e.__class__.__name__}"
 
 
+def check_config_drift(redis_client) -> Optional[str]:
+    """None se la config live (Redis) coincide col YAML dichiarato sui campi
+    pre-registrati, descrizione della deriva altrimenti. Esiste per il
+    2026-07-20: un riavvio di Redis ha resuscitato uno snapshot con la
+    soglia pre-esperimento (0.55 invece di 0.50) e il forward test ha girato
+    ~20h fuori protocollo senza che nulla lo segnalasse — scoperto a occhio
+    dalla pagina Configurazione (docs/PRE_REGISTRO_FORWARD.md, incidenti)."""
+    import json
+
+    import yaml
+    campi_pre_registrati = ("ml_confidence_threshold", "symbols", "timeframe")
+    try:
+        raw = redis_client.get("trading_config")
+        with open(REPO_ROOT / "config" / "trading_params.yaml") as f:
+            dichiarata = yaml.safe_load(f)
+    except Exception as e:
+        return f"config non confrontabile: {e}"
+    if not raw:
+        return None                 # Redis vuoto: al prossimo avvio vince il YAML
+    live = json.loads(raw)
+    derive = [f"{campo}: live={live[campo]!r} dichiarato={dichiarata[campo]!r}"
+              for campo in campi_pre_registrati
+              if campo in dichiarata and campo in live
+              and live[campo] != dichiarata[campo]]
+    return "; ".join(derive) if derive else None
+
+
 def check_model_health(redis_client) -> Optional[str]:
     """None se il comportamento recente del modello è nella norma,
     descrizione del problema altrimenti. Non aziona nulla (il circuit
@@ -192,6 +219,7 @@ def main() -> int:
     problems = evaluate_checks(values, now)
     problems["ollama"] = check_ollama()
     problems["modello"] = check_model_health(client)
+    problems["config drift"] = check_config_drift(client)
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 
