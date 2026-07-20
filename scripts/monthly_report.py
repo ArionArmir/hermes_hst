@@ -50,6 +50,33 @@ def calendario_esperimenti() -> list[str]:
     return righe
 
 
+def sezione_liquidazioni(mese: str) -> list[str]:
+    righe = ["", "=" * 78, "LIQUIDAZIONI (descrittivo: tipicità del periodo e salute dataset)", "=" * 78]
+    try:
+        from src.liquidations.stats import (DIR_BINANCE, DIR_BYBIT, carica_daily,
+                                            eventi_bybit_oggi, quota_censura,
+                                            regime_mensile, salute_registratore)
+        regime = regime_mensile(carica_daily(), mese)
+        if regime:
+            righe.append(f"  regime del mese: {regime['fascia']} (percentile mediano "
+                         f"{regime['mediana']:.0%} su {len(regime['percentili'])} simboli, "
+                         f"storico Coinalyze dal 2020)")
+        else:
+            righe.append("  regime: aggregato Coinalyze non disponibile")
+        for nome, cartella in (("Binance", DIR_BINANCE), ("Bybit", DIR_BYBIT)):
+            s = salute_registratore(cartella)
+            righe.append(f"  recorder {nome}: {s['giorni_raccolti']} giorni raccolti, "
+                         f"{s['eventi_oggi']} eventi oggi" if s
+                         else f"  recorder {nome}: nessun dato")
+        censura = quota_censura(eventi_bybit_oggi())
+        if censura:
+            righe.append(f"  censura Binance misurata su Bybit: {censura['quota']:.1%} "
+                         f"degli eventi oltre 1/simbolo/secondo (minorante)")
+    except Exception as e:
+        righe.append(f"  sezione non disponibile ({e})")
+    return righe
+
+
 def main():
     mese = date.today().strftime("%Y-%m")
     RAPPORTI.mkdir(parents=True, exist_ok=True)
@@ -88,7 +115,8 @@ def main():
     # 3+4) composizione e salvataggio
     out = RAPPORTI / f"{mese}.md"
     out.write_text("```\n" + "\n".join(testa) + corpo
-                   + "\n".join(calendario_esperimenti()) + "\n```\n")
+                   + "\n".join(calendario_esperimenti())
+                   + "\n".join(sezione_liquidazioni(mese)) + "\n```\n")
     print(f"rapporto salvato: {out}")
 
 
