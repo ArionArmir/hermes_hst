@@ -119,30 +119,44 @@ def check_ollama(base_url: Optional[str] = None) -> Optional[str]:
         return f"non raggiungibile ({url}): {e.__class__.__name__}"
 
 
-def check_config_drift(redis_client) -> Optional[str]:
-    """None se la config live (Redis) coincide col YAML dichiarato sui campi
-    pre-registrati, descrizione della deriva altrimenti. Esiste per il
-    2026-07-20: un riavvio di Redis ha resuscitato uno snapshot con la
-    soglia pre-esperimento (0.55 invece di 0.50) e il forward test ha girato
-    ~20h fuori protocollo senza che nulla lo segnalasse — scoperto a occhio
-    dalla pagina Configurazione (docs/PRE_REGISTRO_FORWARD.md, incidenti)."""
+def check_config_drift(redis_client,
+                       manifest_path: Optional[Path] = None) -> Optional[str]:
+    """None se lo stato vivo coincide col manifest dichiarato
+    (config/forward_manifest.yaml): TUTTI i campi della config contro Redis,
+    più lo sha256 del champion su disco. Esiste per il 2026-07-20: un
+    riavvio di Redis ha resuscitato la soglia pre-esperimento (0.55 invece
+    di 0.50) e il forward ha girato ~20h fuori protocollo senza che nulla lo
+    segnalasse (docs/PRE_REGISTRO_FORWARD.md, registro incidenti). Il check
+    del modello copre anche il trainer settimanale rotto: se sovrascrivesse
+    champion.pkl, l'inference lo ricaricherebbe a caldo in silenzio."""
+    import hashlib
     import json
 
     import yaml
-    campi_pre_registrati = ("ml_confidence_threshold", "symbols", "timeframe")
+    manifest_path = manifest_path or REPO_ROOT / "config" / "forward_manifest.yaml"
     try:
+        manifest = yaml.safe_load(manifest_path.read_text())
         raw = redis_client.get("trading_config")
-        with open(REPO_ROOT / "config" / "trading_params.yaml") as f:
-            dichiarata = yaml.safe_load(f)
     except Exception as e:
-        return f"config non confrontabile: {e}"
-    if not raw:
-        return None                 # Redis vuoto: al prossimo avvio vince il YAML
-    live = json.loads(raw)
-    derive = [f"{campo}: live={live[campo]!r} dichiarato={dichiarata[campo]!r}"
-              for campo in campi_pre_registrati
-              if campo in dichiarata and campo in live
-              and live[campo] != dichiarata[campo]]
+        return f"manifest non confrontabile: {e}"
+
+    derive = []
+    if raw:                          # Redis vuoto: al prossimo avvio vince il YAML
+        live = json.loads(raw)
+        dichiarata = manifest["config"]
+        derive += [f"{campo}: live={live[campo]!r} dichiarato={dichiarata[campo]!r}"
+                   for campo in dichiarata
+                   if campo in live and live[campo] != dichiarata[campo]]
+
+    modello = REPO_ROOT / "config" / "models" / "champion.pkl"
+    try:
+        sha = hashlib.sha256(modello.read_bytes()).hexdigest()
+        if sha != manifest["champion_sha256"]:
+            derive.append(f"champion.pkl: sha {sha[:12]} ≠ dichiarato "
+                          f"{manifest['champion_sha256'][:12]} — modello cambiato "
+                          "a esperimento in corso")
+    except OSError as e:
+        derive.append(f"champion.pkl illeggibile: {e}")
     return "; ".join(derive) if derive else None
 
 

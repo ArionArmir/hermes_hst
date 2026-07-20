@@ -1,0 +1,36 @@
+esperimento: forward_v1
+nota: 'Stato DICHIARATO congelato del forward test (docs/PRE_REGISTRO_FORWARD.md).
+  Il watchdog confronta ogni minuto questo file con Redis e col modello su disco:
+  una divergenza e'' una deriva, mai una modifica legittima. Nato dopo l''incidente
+  del 2026-07-20 (soglia resuscitata da uno snapshot Redis vecchio).'
+generato: '2026-07-20'
+config:
+  leverage: 3
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.04
+  max_position_size_usdt: 50.0
+  trailing_stop_pct: 0.015
+  max_exposure: 0.5
+  max_positions_same_direction: 3
+  taker_fee_pct: 0.0005
+  symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - TRXUSDT
+  - DOGEUSDT
+  - BNBUSDT
+  - XRPUSDT
+  timeframe: 1h
+  ml_confidence_threshold: 0.5
+  sentiment_weight: 0.3
+  max_holding_minutes: 300
+  reverse_cooldown_minutes: 15
+  reverse_confidence_margin: 0.05
+  entry_cooldown_minutes: 60
+  circuit_breaker_enabled: true
+  circuit_breaker_max_consecutive_losses: 3
+  circuit_breaker_cooldown_minutes: 1440
+  circuit_breaker_max_daily_loss_pct: 0.05
+  circuit_breaker_max_drawdown_pct: 0.2
+champion_sha256: ad5b86f47ba14e705b6db1b7cc1fc1fd9d2cd1848c5af162f94503a7fc311ca7

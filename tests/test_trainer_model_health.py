@@ -1,9 +1,13 @@
 """
 Pubblicazione delle metriche attese del champion alla promozione
 (docs/IMPROVEMENT_PLAN.md, V4/N4): il watchdog le confronta col
-comportamento live per rilevare un degrado del modello. Usa Redis reale
-(come test_redis_hardening.py) ma su model_path/challenger_path sandboxati
-in tmp_path e con pulizia esplicita delle chiavi al termine.
+comportamento live per rilevare un degrado del modello.
+
+Isolamento: chiavi su db 15 (mai quello dei servizi) e publish
+INTERCETTATO — i canali pubsub sono globali al server Redis, e il
+2026-07-20 questa suite ha fatto ricaricare il modello all'inference di
+produzione pubblicando 'model_swap' sul canale vero. Un test non deve
+poter parlare ai servizi vivi.
 """
 import sys
 from dataclasses import dataclass
@@ -25,8 +29,25 @@ class _FakeBacktestResult:
     net_pnl: float
 
 
+class _RedisSandbox:
+    """Chiavi vere ma su db 15; publish registrato invece che inviato."""
+
+    def __init__(self):
+        self._client = redis.Redis(host="localhost", port=6379, db=15,
+                                   decode_responses=True)
+        self.pubblicati = []
+
+    def publish(self, channel, message):
+        self.pubblicati.append((channel, message))
+        return 0
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
 def _make_trainer(tmp_path) -> Trainer:
     trainer = Trainer()
+    trainer.redis = _RedisSandbox()
     trainer.model_path = str(tmp_path / "champion.pkl")
     trainer.challenger_path = str(tmp_path / "challenger.pkl")
     Path(trainer.challenger_path).write_bytes(b"stub-model-bytes")
@@ -46,6 +67,8 @@ def test_swap_model_publishes_validation_metrics(tmp_path):
         assert trainer.redis.get("champion_net_pnl") == "12.34"
         assert trainer.redis.get("champion_promoted_at") is not None
         assert Path(trainer.model_path).read_bytes() == b"stub-model-bytes"
+        # la swap DEVE annunciare il nuovo modello — ma nella sandbox, non ai vivi
+        assert ("model_swap", trainer.model_path) in trainer.redis.pubblicati
     finally:
         _cleanup(trainer)
 

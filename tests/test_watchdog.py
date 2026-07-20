@@ -177,30 +177,50 @@ def test_missing_champion_expectation_is_handled_gracefully():
     assert problem is not None  # non deve sollevare, solo omettere il confronto
 
 
-def test_config_drift_rilevata():
-    """Il caso del 2026-07-20: Redis resuscita una soglia pre-esperimento
-    diversa dal YAML dichiarato — deve urlare, non tacere."""
-    import json
-    from watchdog import check_config_drift
-    client = MagicMock()
-    client.get.return_value = json.dumps(
-        {"ml_confidence_threshold": 0.55, "timeframe": "1h"})
-    finto_yaml = "ml_confidence_threshold: 0.50\ntimeframe: 1h\n"
-    with patch("builtins.open", create=True) as mock_open:
-        mock_open.return_value.__enter__.return_value.read = lambda: finto_yaml
-        with patch("yaml.safe_load", return_value={"ml_confidence_threshold": 0.50,
-                                                   "timeframe": "1h"}):
-            problema = check_config_drift(client)
-    assert problema and "ml_confidence_threshold" in problema
+def _manifest_su(tmp_path, config, sha):
+    import yaml
+    p = tmp_path / "forward_manifest.yaml"
+    p.write_text(yaml.safe_dump({"config": config, "champion_sha256": sha}))
+    return p
 
 
-def test_config_allineata_e_redis_vuoto_sono_sani():
+def _client_con(config_json):
     import json
-    from watchdog import check_config_drift
     client = MagicMock()
-    with patch("yaml.safe_load", return_value={"ml_confidence_threshold": 0.50}):
-        with patch("builtins.open", create=True):
-            client.get.return_value = json.dumps({"ml_confidence_threshold": 0.50})
-            assert check_config_drift(client) is None
-            client.get.return_value = None     # Redis vuoto: al boot vince il YAML
-            assert check_config_drift(client) is None
+    client.get.return_value = json.dumps(config_json) if config_json is not None else None
+    return client
+
+
+def test_manifest_fire_drill_ogni_deriva_urla(tmp_path, monkeypatch):
+    """Simula ognuna delle derive possibili e pretende l'allarme: il
+    controllo dei controlli (intervento 5 dell'indurimento 2026-07-20)."""
+    import hashlib
+    from watchdog import check_config_drift
+    import watchdog as w
+    modello = tmp_path / "config" / "models" / "champion.pkl"
+    modello.parent.mkdir(parents=True)
+    modello.write_bytes(b"modello-dichiarato")
+    sha_ok = hashlib.sha256(b"modello-dichiarato").hexdigest()
+    monkeypatch.setattr(w, "REPO_ROOT", tmp_path)
+    dichiarata = {"ml_confidence_threshold": 0.50, "leverage": 3}
+    manifest = _manifest_su(tmp_path, dichiarata, sha_ok)
+
+    # sano: nessuna deriva
+    assert check_config_drift(_client_con(dichiarata), manifest) is None
+    # deriva su un campo qualunque (non solo la soglia)
+    assert "leverage" in check_config_drift(
+        _client_con({**dichiarata, "leverage": 5}), manifest)
+    # deriva della soglia (l'incidente vero)
+    assert "ml_confidence_threshold" in check_config_drift(
+        _client_con({**dichiarata, "ml_confidence_threshold": 0.55}), manifest)
+    # Redis vuoto: sano (al boot vince il YAML)
+    assert check_config_drift(_client_con(None), manifest) is None
+    # modello sovrascritto (il trainer rotto): deve urlare anche a config sana
+    modello.write_bytes(b"modello-diverso")
+    assert "champion.pkl" in check_config_drift(_client_con(dichiarata), manifest)
+    # modello sparito
+    modello.unlink()
+    assert "champion.pkl" in check_config_drift(_client_con(dichiarata), manifest)
+    # manifest illeggibile: problema, non silenzio
+    assert check_config_drift(_client_con(dichiarata),
+                              tmp_path / "inesistente.yaml") is not None
