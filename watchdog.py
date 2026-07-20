@@ -45,6 +45,8 @@ CHECKS = {
     # ore (migrazione endpoint Binance) col heartbeat verde. Le liquidazioni
     # market-wide non stanno mai ferme un'ora: silenzio = stream rotto.
     "eventi liquidazioni": {"key": "last_liquidation_event", "stale_after": 3600},
+    "liquidations bybit": {"key": "heartbeat_liquidations_bybit", "stale_after": 400},
+    "eventi liq. bybit": {"key": "last_liquidation_event_bybit", "stale_after": 3600},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},
     "candele": {"key": "candle_feed_last_success", "stale_after": 900},
