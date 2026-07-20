@@ -4,4 +4,8 @@ Description=Hermes - Rapporto mensile dell'analista (+ tripwire carry)
 [Service]
 Type=oneshot
 WorkingDirectory=%h/hermes_hft
+# Il "-" tollera il fallimento: senza chiave o con l'API giù il backfill
+# salta ma il rapporto esce comunque. Il run mensile basta a estendere la
+# serie oraria Coinalyze senza buchi (la finestra gratuita scorre più piano).
+ExecStartPre=-%h/hermes_hft/venv/bin/python scripts/coinalyze_backfill.py
 ExecStart=%h/hermes_hft/venv/bin/python scripts/monthly_report.py
