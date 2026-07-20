@@ -77,6 +77,38 @@ def sezione_liquidazioni(mese: str) -> list[str]:
     return righe
 
 
+def sezione_eventi(mese: str, path: Path | None = None) -> list[str]:
+    """Il mese in eventi: conteggio per tipo dal feed (fase 3 widget D).
+    Gli allarmi vengono anche elencati: sono pochi per costruzione e sono
+    la parte del mese che non deve sparire nella somma."""
+    from src.eventi.osservatore import PATH_EVENTI
+    path = path or PATH_EVENTI
+    righe = ["", "=" * 78, "EVENTI DEL MESE (feed: descrive, non suggerisce)", "=" * 78]
+    if not path.exists():
+        righe.append("  nessun evento registrato")
+        return righe
+    per_tipo, allarmi = {}, []
+    for r in path.read_text().splitlines():
+        try:
+            e = json.loads(r)
+        except json.JSONDecodeError:
+            continue
+        if not e.get("ts", "").startswith(mese):
+            continue
+        per_tipo[e["tipo"]] = per_tipo.get(e["tipo"], 0) + 1
+        if e.get("severita") == "allarme":
+            allarmi.append(f"    {e['ts'][:16]}  {e['titolo']}")
+    if not per_tipo:
+        righe.append("  nessun evento nel mese")
+        return righe
+    righe += [f"  {tipo}: {n}" for tipo, n in sorted(per_tipo.items(),
+                                                     key=lambda kv: -kv[1])]
+    if allarmi:
+        righe.append("  allarmi del mese:")
+        righe += allarmi
+    return righe
+
+
 def main():
     mese = date.today().strftime("%Y-%m")
     RAPPORTI.mkdir(parents=True, exist_ok=True)
@@ -116,7 +148,8 @@ def main():
     out = RAPPORTI / f"{mese}.md"
     out.write_text("```\n" + "\n".join(testa) + corpo
                    + "\n".join(calendario_esperimenti())
-                   + "\n".join(sezione_liquidazioni(mese)) + "\n```\n")
+                   + "\n".join(sezione_liquidazioni(mese))
+                   + "\n".join(sezione_eventi(mese)) + "\n```\n")
     print(f"rapporto salvato: {out}")
 
 

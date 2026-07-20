@@ -136,3 +136,26 @@ def test_cascata_stessa_ora_non_duplica(tmp_path):
     e2 = rileva(recorder, {"BTCUSDT": 5}, adesso)    # il giro dopo, stessa ora
     assert registra_eventi(e1, path) == 1
     assert registra_eventi(e2, path) == 0
+
+
+def test_sezione_mensile_conta_e_elenca_allarmi(tmp_path):
+    """Fase 3: il mese in eventi nel rapporto — conteggi per tipo, allarmi
+    mai sommersi nella somma."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "mr", Path(__file__).parent.parent / "scripts" / "monthly_report.py")
+    mr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mr)
+    path = tmp_path / "eventi.jsonl"
+    path.write_text("\n".join([
+        json.dumps({"ts": "2026-07-05T10:00:00", "tipo": "carry", "severita": "info",
+                    "titolo": "Ribilanciamento", "chiave": "k1"}),
+        json.dumps({"ts": "2026-07-06T11:00:00", "tipo": "deriva", "severita": "allarme",
+                    "titolo": "Allarme: config drift", "chiave": "k2"}),
+        json.dumps({"ts": "2026-06-30T10:00:00", "tipo": "carry", "severita": "info",
+                    "titolo": "Fuori mese", "chiave": "k3"}),
+    ]) + "\n")
+    righe = mr.sezione_eventi("2026-07", path)
+    testo = "\n".join(righe)
+    assert "carry: 1" in testo and "deriva: 1" in testo
+    assert "config drift" in testo and "Fuori mese" not in testo
