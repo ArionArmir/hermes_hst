@@ -1,0 +1,8 @@
+[Unit]
+Description=Hermes - Fase 0 studio firma liquidazioni (aggancio etichette-nastro)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python scripts/firma_fase0.py --auto
