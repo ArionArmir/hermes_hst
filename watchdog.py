@@ -249,6 +249,14 @@ def main() -> int:
         notifier.send_telegram(f"✅ Watchdog Hermes: rientrato — {names}")
         client.srem(ALERT_STATE_KEY, *recovered)
 
+    # il feed eventi deriva dagli artefatti: un suo errore non deve mai
+    # zittire il watchdog, che è l'ultima linea di difesa
+    try:
+        from src.eventi.osservatore import osserva_tutto
+        osserva_tutto(new_alerts, recovered)
+    except Exception as e:
+        print(f"[watchdog] osservatore eventi fallito (non bloccante): {e}")
+
     if args.restart:
         stale_services = [name for name, desc in problems.items()
                           if desc and name in RESTARTABLE]

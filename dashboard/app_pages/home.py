@@ -316,6 +316,34 @@ def _ultimi_segnali() -> pd.DataFrame:
     return store.read_signals(limit=10)
 
 
+ICONA_SEVERITA = {"allarme": "🔴", "nota": "🟡", "info": "⚪"}
+
+
+@st.fragment(run_every="60s")
+def render_eventi():
+    """D: cos'è successo mentre non guardavo — il feed derivato
+    dall'osservatore (src/eventi/osservatore.py). Descrive, non suggerisce."""
+    from src.eventi.osservatore import leggi_eventi
+
+    eventi = leggi_eventi(15)
+    if not eventi:
+        st.info("Nessun evento registrato ancora (l'osservatore gira col watchdog)")
+        return
+    adesso = pd.Timestamp.now(tz="UTC")
+    for e in eventi:
+        ts = pd.to_datetime(e["ts"], format="ISO8601", utc=True)
+        minuti = (adesso - ts).total_seconds() / 60
+        quando = (f"{minuti:.0f} min fa" if minuti < 90 else
+                  f"{minuti / 60:.0f} ore fa" if minuti < 60 * 36 else
+                  f"{ts:%d/%m %H:%M}")
+        with st.container(horizontal=True):
+            st.markdown(f"{ICONA_SEVERITA.get(e['severita'], '⚪')} **{e['titolo']}**")
+            st.caption(f"{e['dettaglio']} · {quando}" if e["dettaglio"] else quando)
+
+
+st.subheader("Eventi")
+render_eventi()
+
 st.subheader("Sentiment e segnali")
 tab_sentiment, tab_signals = st.tabs(["Sentiment", "Segnali ML"])
 with tab_sentiment:
