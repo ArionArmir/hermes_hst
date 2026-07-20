@@ -1,9 +1,12 @@
+import json
 import os
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.shared import store
 from utils import formatting, ohlc, process_manager
 from utils.redis_client import (
     get_heartbeat,
@@ -35,7 +38,7 @@ def _get_symbols() -> list[str]:
     return DEFAULT_SYMBOLS
 
 
-@st.fragment(run_every="5s")
+@st.fragment(run_every="10s")
 def render_process_status():
     with st.container(horizontal=True):
         for service in SERVICES:
@@ -70,7 +73,7 @@ def render_process_status():
                         st.caption("🔴 Nessun tick ricevuto")
 
 
-@st.fragment(run_every="5s")
+@st.fragment(run_every="10s")
 def render_kpis():
     trades_df = formatting.load_trades()
     capitale_attuale, max_drawdown = formatting.compute_capital_and_drawdown(trades_df)
@@ -117,7 +120,7 @@ def render_positions():
     st.metric("PnL totale corrente", f"{df['PnL (USDT)'].sum():,.2f} USDT")
 
 
-@st.fragment(run_every="15s")
+@st.fragment(run_every="30s")
 def render_candles():
     symbols = _get_symbols()
     tabs = st.tabs(symbols, on_change="rerun")
@@ -170,20 +173,76 @@ with col_trades:
 st.subheader("Prezzi")
 render_candles()
 
+STORIA_V2 = Path(__file__).resolve().parents[2] / "data" / "sentiment_v2" / "storia.jsonl"
+
+
+def _get_sentiment_v2() -> tuple[float | None, dict]:
+    """Aggregato e dettaglio per asset della v2 in ombra, dalle sue chiavi."""
+    from utils.redis_client import get_client, get_json
+    raw = get_client().get("sentiment_v2")
+    per_asset = {}
+    for asset in ["BTC", "ETH", "SOL", "TRX", "DOGE", "BNB", "XRP"]:
+        d = get_json(f"sentiment_v2_{asset.lower()}")
+        if d:
+            per_asset[asset] = d
+    return (float(raw) if raw else None), per_asset
+
+
+@st.cache_data(ttl="5m")
+def _storico_confronto() -> pd.DataFrame:
+    """Ultime 24h dei due aggregati, per il grafico v1-contro-v2."""
+    v1 = store.read_sentiment(limit=3000)
+    v1 = v1[v1["asset"] == "aggregate"].copy()
+    v1["ts"] = pd.to_datetime(v1["timestamp"], format="ISO8601", utc=True)
+    serie = {"v1 (motore)": v1.set_index("ts")["score"]}
+    if STORIA_V2.exists():
+        righe = [json.loads(r) for r in STORIA_V2.read_text().splitlines()[-300:]]
+        v2 = pd.DataFrame([{"ts": r["ts"], "score": r["aggregate"]} for r in righe])
+        v2["ts"] = pd.to_datetime(v2["ts"], format="ISO8601", utc=True)
+        serie["v2 (ombra)"] = v2.set_index("ts")["score"]
+    df = pd.DataFrame(serie).sort_index()
+    return df[df.index >= df.index.max() - pd.Timedelta(hours=24)]
+
+
+@st.cache_data(ttl="10s")
+def _ultimi_segnali() -> pd.DataFrame:
+    return store.read_signals(limit=10)
+
+
 st.subheader("Sentiment e segnali")
 tab_sentiment, tab_signals = st.tabs(["Sentiment", "Segnali ML"])
 with tab_sentiment:
     score = get_sentiment_score()
+    v2_score, v2_asset = _get_sentiment_v2()
+    with st.container(horizontal=True):
+        st.metric("v1 — aggregato (alimenta il motore)",
+                  f"{score:.2f}" if score is not None else "n/d", border=True)
+        st.metric("v2 — aggregato (in ombra, non letto dal motore)",
+                  f"{v2_score:.2f}" if v2_score is not None else "n/d", border=True)
     by_asset = get_sentiment_by_asset()
-    st.metric("Sentiment aggregato", f"{score:.2f}" if score is not None else "n/d")
-    if by_asset:
-        st.dataframe(pd.DataFrame([by_asset]), hide_index=True, width="stretch")
+    if by_asset or v2_asset:
+        righe = []
+        for asset in sorted(set(by_asset) | set(v2_asset)):
+            d = v2_asset.get(asset, {})
+            righe.append({"Asset": asset, "v1": by_asset.get(asset),
+                          "v2": d.get("score"), "Stato v2": d.get("stato", "—"),
+                          "Notizie nuove": d.get("notizie_nuove")})
+        st.dataframe(pd.DataFrame(righe), hide_index=True, width="stretch",
+                     column_config={
+                         "v1": st.column_config.NumberColumn(format="%.2f"),
+                         "v2": st.column_config.NumberColumn(format="%.2f"),
+                     })
+    confronto = _storico_confronto()
+    if len(confronto):
+        st.line_chart(confronto, height=220)
+    st.caption("La v2 gira in ombra con criteri di accettazione scritti prima "
+               "(docs/CRITERI_SENTIMENT_V2.md): confronto il 2026-08-04. Lo zero "
+               "della v2 ha sempre uno stato che lo spiega; quello della v1 no — "
+               "è uno dei difetti misurati che la v2 deve correggere.")
 with tab_signals:
     # Ultime decisioni dal db (tabella signals): la vista completa con
     # filtri è nella pagina Analisi
-    from src.shared import store
-
-    signals_df = store.read_signals(limit=10)
+    signals_df = _ultimi_segnali()
     if signals_df.empty:
         st.info("Nessuna decisione sui segnali registrata ancora")
     else:
