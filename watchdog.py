@@ -46,6 +46,7 @@ CHECKS = {
     # market-wide non stanno mai ferme un'ora: silenzio = stream rotto.
     "eventi liquidazioni": {"key": "last_liquidation_event", "stale_after": 3600},
     "liquidations bybit": {"key": "heartbeat_liquidations_bybit", "stale_after": 400},
+    "sentiment v2": {"key": "heartbeat_sentiment_v2", "stale_after": 120},
     "eventi liq. bybit": {"key": "last_liquidation_event_bybit", "stale_after": 3600},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},

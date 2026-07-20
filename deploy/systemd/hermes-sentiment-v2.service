@@ -1,0 +1,13 @@
+[Unit]
+Description=Hermes - Sentiment v2 in ombra (non alimenta il motore)
+After=network-online.target redis-server.service
+
+[Service]
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python -m src.sentiment.v2
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
