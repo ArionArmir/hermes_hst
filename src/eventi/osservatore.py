@@ -161,7 +161,9 @@ def osserva_tutto(nuovi_allarmi: dict | None = None,
     righe_ledger = (LEDGER_CARRY.read_text().splitlines()
                     if LEDGER_CARRY.exists() else [])
     da_ledger, cursori["ledger"] = nuovi_da_ledger(righe_ledger, cursori.get("ledger", 0))
-    eventi = da_signals + da_trades + da_ledger + eventi_watchdog(nuovi_allarmi, rientrati)
+    from src.eventi.cascate import eventi_cascata
+    eventi = (da_signals + da_trades + da_ledger
+              + eventi_watchdog(nuovi_allarmi, rientrati) + eventi_cascata())
 
     scritti = registra_eventi(eventi)
     DIR_EVENTI.mkdir(parents=True, exist_ok=True)

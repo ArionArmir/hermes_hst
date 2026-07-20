@@ -83,3 +83,56 @@ def test_fire_drill_completo(tmp_path):
     letti = leggi_eventi(10, path)
     assert len(letti) == 3
     assert letti[0]["titolo"].startswith("Rientrato")   # l'ultimo scritto esce primo
+
+
+def test_cascate_soglie_e_rilevamento():
+    """Fase 2: soglie dal formato Coinalyze, rilevamento per simbolo e di
+    mercato, chiave di dedup con l'ora dentro."""
+    from datetime import datetime, timezone
+    from src.eventi.cascate import rileva, soglie_da_storico
+    orario = pd.DataFrame({
+        "symbol": ["BTCUSDT_PERP.A"] * 200 + ["ETHUSDT_PERP.A"] * 200,
+        "liq_long": [1.0] * 199 + [100.0] + [10.0] * 199 + [1000.0],
+        "liq_short": 0.0,
+    })
+    soglie = soglie_da_storico(orario)
+    assert set(soglie) == {"BTCUSDT", "ETHUSDT"}
+    assert 1.0 < soglie["BTCUSDT"] <= 100.0          # P99.5 sopra il grosso, sotto il max
+
+    adesso = datetime(2026, 7, 21, 12, 30, tzinfo=timezone.utc)
+    dentro = pd.Timestamp(adesso) - pd.Timedelta(minutes=10)
+    recorder = pd.DataFrame({
+        "ts": [dentro, dentro, pd.Timestamp(adesso) - pd.Timedelta(hours=3)],
+        "symbol": ["BTCUSDT", "BTCUSDT", "ETHUSDT"],
+        "qty": [80.0, 80.0, 99999.0],                # ETH fuori finestra: non conta
+    })
+    eventi = rileva(recorder, soglie, adesso)
+    assert len(eventi) == 1
+    assert "BTCUSDT" in eventi[0]["titolo"] and eventi[0]["severita"] == "nota"
+    assert eventi[0]["chiave"] == "cascata:BTCUSDT:2026-07-21 12"
+
+
+def test_cascata_di_mercato_a_tre_simboli():
+    from datetime import datetime, timezone
+    from src.eventi.cascate import rileva
+    adesso = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    t = pd.Timestamp(adesso) - pd.Timedelta(minutes=5)
+    recorder = pd.DataFrame({"ts": [t] * 3,
+                             "symbol": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+                             "qty": [10.0, 10.0, 10.0]})
+    eventi = rileva(recorder, {"BTCUSDT": 5, "ETHUSDT": 5, "SOLUSDT": 5}, adesso)
+    assert len(eventi) == 4                          # 3 simboli + 1 di mercato
+    assert any("MERCATO" in e["titolo"] for e in eventi)
+
+
+def test_cascata_stessa_ora_non_duplica(tmp_path):
+    from datetime import datetime, timezone
+    from src.eventi.cascate import rileva
+    adesso = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    t = pd.Timestamp(adesso) - pd.Timedelta(minutes=5)
+    recorder = pd.DataFrame({"ts": [t], "symbol": ["BTCUSDT"], "qty": [10.0]})
+    path = tmp_path / "eventi.jsonl"
+    e1 = rileva(recorder, {"BTCUSDT": 5}, adesso)
+    e2 = rileva(recorder, {"BTCUSDT": 5}, adesso)    # il giro dopo, stessa ora
+    assert registra_eventi(e1, path) == 1
+    assert registra_eventi(e2, path) == 0
