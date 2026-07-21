@@ -297,7 +297,11 @@ def _get_sentiment_v2() -> tuple[float | None, dict]:
 
 @st.cache_data(ttl="5m")
 def _storico_confronto() -> pd.DataFrame:
-    """Ultime 24h dei due aggregati, per il grafico v1-contro-v2."""
+    """Ultime 24h dei due aggregati, per il grafico v1-contro-v2. Le due
+    serie scrivono a istanti diversi: senza griglia comune ogni colonna è
+    piena di NaN alternati e Vega spezza la linea a ogni buco — la v2
+    'spariva' così. Ricampionate a 10 minuti, un ffill corto per i bin
+    dispari."""
     v1 = store.read_sentiment(limit=3000)
     v1 = v1[v1["asset"] == "aggregate"].copy()
     v1["ts"] = pd.to_datetime(v1["timestamp"], format="ISO8601", utc=True)
@@ -307,7 +311,8 @@ def _storico_confronto() -> pd.DataFrame:
         v2 = pd.DataFrame([{"ts": r["ts"], "score": r["aggregate"]} for r in righe])
         v2["ts"] = pd.to_datetime(v2["ts"], format="ISO8601", utc=True)
         serie["v2 (ombra)"] = v2.set_index("ts")["score"]
-    df = pd.DataFrame(serie).sort_index()
+    griglia = {nome: s.resample("10min").mean() for nome, s in serie.items()}
+    df = pd.DataFrame(griglia).sort_index().ffill(limit=1)
     return df[df.index >= df.index.max() - pd.Timedelta(hours=24)]
 
 
