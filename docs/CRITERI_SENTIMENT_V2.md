@@ -43,6 +43,20 @@ punto di decisione — non prima.
 | Ripetibilità (sonda doppia): stesso segno e scarto ≤ 0.2 | ignota | ≥ 80% delle sonde |
 | Punteggi con stato dichiarato | 0% | 100% |
 
+## Annotazione — cambio di backend (2026-07-21 00:52 UTC)
+
+Ollama migrato da WSL (CPU) al server Windows sulla GPU (RX 9070 XT, porta
+11435): **stessi modelli, stessi ID, stessi prompt** — cambia solo dove
+girano. Il 7B passa da ~21 a ~71 token/s. Onestà per la lettura del
+2026-08-04: la finestra di validazione è per ~metà CPU e per ~metà GPU
+(float non deterministici tra i due backend); la sonda di ripetibilità
+continua a misurare la stabilità nel nuovo regime, e i criteri sono
+distribuzionali, non bit-a-bit. Rollback: una riga in .env (OLLAMA_HOST →
+localhost) — il server WSL resta installato coi modelli fino a stabilità
+dimostrata. Limite noto: l'IP del gateway (172.20.96.1) può cambiare a un
+riavvio di WSL; in quel caso il check Ollama del watchdog scatta entro un
+minuto e la v1 degrada al suo zero spiegato.
+
 ## I tre esiti possibili al 2026-08-04 (dichiarati oggi)
 
 - **PASSA + si vuole la situazione aggiornata** → terminare forward_v1
