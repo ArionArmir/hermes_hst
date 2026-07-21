@@ -23,6 +23,9 @@ FONTI = {
     "SEC": "https://www.sec.gov/news/pressreleases.rss",
     "CFTC": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml",
     "ESMA": "https://www.esma.europa.eu/rss.xml",
+    # sanzioni: le notizie regolatorie più crypto-moving e le più lente
+    # a essere riprese dalla stampa
+    "OFAC": "https://ofac.treasury.gov/rss.xml",
 }
 SPAZIO_VISTE = "MACRO"      # namespace nella memoria-novità condivisa della v2
 

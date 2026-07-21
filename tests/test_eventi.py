@@ -159,3 +159,32 @@ def test_sezione_mensile_conta_e_elenca_allarmi(tmp_path):
     testo = "\n".join(righe)
     assert "carry: 1" in testo and "deriva: 1" in testo
     assert "config drift" in testo and "Fuori mese" not in testo
+
+
+def test_annunci_estrazione_e_impatto():
+    """Delisting: estrazione coppie dal corpo, allarme solo se tocca i
+    nostri universi, dedup per codice articolo."""
+    from src.eventi.annunci import estrai_coppie, eventi_da_annunci
+    corpo = "<p>At 2026-07-24, pairs ALPHA/USDT, BETA/BTC will be removed</p>"
+    assert estrai_coppie(corpo) == {"ALPHAUSDT", "BETABTC"}
+
+    articoli = [{"code": "abc", "title": "Notice of Removal - 2026-07-24"}]
+    universi = {"carry": {"ALPHAUSDT"}, "motore": {"BTCUSDT"}}
+    eventi, visti = eventi_da_annunci(articoli, {"abc": corpo}, universi, [])
+    assert eventi[0]["severita"] == "allarme" and "carry" in eventi[0]["dettaglio"]
+    # già visto: niente doppioni
+    ancora, visti = eventi_da_annunci(articoli, {"abc": corpo}, universi, visti)
+    assert ancora == []
+    # notice che non ci tocca: info
+    eventi2, _ = eventi_da_annunci([{"code": "xyz", "title": "Notice"}],
+                                   {"xyz": "GAMMA/USDT removed"}, universi, [])
+    assert eventi2[0]["severita"] == "info"
+
+
+def test_depeg_soglia_e_chiave_oraria():
+    from datetime import datetime, timezone
+    from src.eventi.annunci import evento_depeg
+    adesso = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    assert evento_depeg(1.0006, adesso) is None            # 0.06%: pace
+    e = evento_depeg(0.9938, adesso)                       # 0.62%: allarme
+    assert e["severita"] == "allarme" and e["chiave"] == "depeg:USDC:2026-07-21 12"

@@ -164,6 +164,13 @@ def osserva_tutto(nuovi_allarmi: dict | None = None,
     from src.eventi.cascate import eventi_cascata
     eventi = (da_signals + da_trades + da_ledger
               + eventi_watchdog(nuovi_allarmi, rientrati) + eventi_cascata())
+    # fonti di rete: ognuna isolata — una fonte muta non azzittisce le altre
+    from src.eventi.annunci import check_annunci, check_depeg
+    for check in (lambda: check_annunci(cursori), check_depeg):
+        try:
+            eventi += check()
+        except Exception as e:
+            print(f"[eventi] fonte non disponibile (non bloccante): {e}")
 
     scritti = registra_eventi(eventi)
     DIR_EVENTI.mkdir(parents=True, exist_ok=True)
