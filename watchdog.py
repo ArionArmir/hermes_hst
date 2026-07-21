@@ -160,6 +160,33 @@ def check_config_drift(redis_client,
     return "; ".join(derive) if derive else None
 
 
+def check_inference_fresca(redis_client, stale_after: int = 600) -> Optional[str]:
+    """None se le valutazioni ml_conf_* sono fresche. Esiste per la revisione
+    2026-07-21 (I1/I3): l'inference può ammutolire (eccezione sul loop, modello
+    rifiutato senza retry) restando 'active' con heartbeat verde — solo il ts
+    delle valutazioni invecchia, e nessuno lo sorvegliava. Guarda il ts più
+    recente tra i simboli: se l'inference valuta, almeno uno è fresco."""
+    import json
+    chiavi = list(redis_client.scan_iter("ml_conf_*"))
+    if not chiavi:
+        return None                 # nessun simbolo configurato: non è un guasto qui
+    ora = datetime.now(timezone.utc)
+    piu_recente = None
+    for raw in redis_client.mget(chiavi):
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(json.loads(raw)["ts"])
+            piu_recente = ts if piu_recente is None else max(piu_recente, ts)
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+    if piu_recente is None:
+        return "nessuna valutazione ml_conf_* leggibile"
+    age = (ora - piu_recente).total_seconds()
+    return (f"inference muta da {age:.0f}s (soglia {stale_after}s): loop fermo "
+            "o modello non caricato" if age > stale_after else None)
+
+
 def check_model_health(redis_client) -> Optional[str]:
     """None se il comportamento recente del modello è nella norma,
     descrizione del problema altrimenti. Non aziona nulla (il circuit
@@ -234,6 +261,7 @@ def main() -> int:
     problems["ollama"] = check_ollama()
     problems["modello"] = check_model_health(client)
     problems["config drift"] = check_config_drift(client)
+    problems["valutazioni ml"] = check_inference_fresca(client)
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 

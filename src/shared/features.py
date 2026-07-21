@@ -186,6 +186,9 @@ def compute_latest_features(df: pd.DataFrame) -> pd.DataFrame | None:
     if df is None or len(df) < MIN_CANDLES:
         return None
     latest = compute_features(df).iloc[[-1]]
-    if latest.isna().any().any():
+    # revisione 2026-07-21 (I4): isna() NON intercetta ±inf, e un ±inf (es.
+    # pct_change su close=0 durante un incidente dati) passa dentro il modello
+    # come feature plausibile. numpy.isfinite copre sia NaN sia inf.
+    if not np.isfinite(latest.to_numpy(dtype="float64")).all():
         return None
     return latest

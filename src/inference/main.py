@@ -73,10 +73,18 @@ class MLInference:
                         logger.info("✅ Configurazione caricata da YAML")
                 except Exception as e:
                     logger.warning(f"⚠️ Config YAML non trovato: {e}")
-                    self._apply_config(Config())
+                    if self.config is None:
+                        self._apply_config(Config())
         except Exception as e:
-            logger.error(f"❌ Errore caricamento config: {e}")
-            self._apply_config(Config())
+            # revisione 2026-07-21 (I2): MAI regredire ai default hardcoded
+            # (soglia 0.55, 3 simboli) sovrascrivendo una config buona gia'
+            # in memoria — un hiccup di Redis durante un reload replicherebbe
+            # l'incidente della deriva soglia, invisibile al manifest.
+            logger.error(f"❌ Errore caricamento config: {e}"
+                         + (" — tengo la config corrente" if self.config else
+                            " — nessuna config precedente, uso i default"))
+            if self.config is None:
+                self._apply_config(Config())
 
     def _apply_config(self, config: Config):
         self.symbols = [s.lower() for s in config.symbols]
@@ -154,8 +162,14 @@ class MLInference:
                 logger.warning(f"⚠️ Modello non trovato: {self.model_path}")
                 self.model = None
         except Exception as e:
-            logger.error(f"❌ Errore caricamento modello: {e}")
-            self.model = None
+            # revisione 2026-07-21 (I3): un load fallito su file a metà
+            # scrittura (il trainer promuove con shutil.copy, non atomico)
+            # NON deve azzerare un modello valido gia' in servizio — meglio
+            # continuare col vecchio champion che restare muti a tempo indefinito.
+            if self.model is not None:
+                logger.error(f"❌ Errore caricamento modello: {e} — tengo il modello corrente")
+            else:
+                logger.error(f"❌ Errore caricamento modello: {e} — nessun modello in servizio")
 
     async def _websocket_loop(self):
         while self.running:
@@ -216,9 +230,13 @@ class MLInference:
 
     async def _inference_loop(self):
         while self.running:
-            await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
-            await self._publish_candle_feed_health()
+            # revisione 2026-07-21 (I1): heartbeat e telemetria salute DENTRO
+            # il try — un'eccezione Redis qui non deve uccidere il loop lasciando
+            # il processo vivo con heartbeat verde (watchdog cieco).
             try:
+                await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
+                await self._publish_candle_feed_health()
+
                 if self.model is None:
                     await asyncio.sleep(1)
                     continue
@@ -227,6 +245,9 @@ class MLInference:
                 positions_data = await self.redis.get_json('positions')
 
                 for symbol in self.symbols:
+                  # revisione 2026-07-21 (I9): un simbolo problematico non deve
+                  # affamare i successivi — try per simbolo, non per ciclo
+                  try:
                     candles = await self.candle_feed.get_candles(symbol.upper())
                     # DataFrame 1×N con i nomi di colonna: XGBoost valida che
                     # corrispondano a quelli visti in training (con un ndarray
@@ -284,6 +305,8 @@ class MLInference:
 
                     await self.redis.publish('ml_signals', signal.model_dump())
                     logger.debug(f"📊 {symbol.upper()} Segnale ML: {action} (conf={prob:.2f})")
+                  except Exception as e:
+                    logger.error(f"❌ Errore su {symbol.upper()}: {e}")
 
             except Exception as e:
                 logger.error(f"❌ Errore inference loop: {e}")

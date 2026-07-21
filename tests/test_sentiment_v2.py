@@ -103,3 +103,54 @@ def test_titoli_macro_prefissati_e_spazio_separato():
     assert len(nuovi) == 1
     nuovi_btc, _ = novita(["Rate decision"], viste, ADESSO, spazio="BTC")
     assert len(nuovi_btc) == 1
+
+
+def test_decadimento_clampa_minuti_negativi():
+    """Orologio all'indietro (NTP/sleep WSL2): mai amplificare (S4)."""
+    assert decadi(0.8, -120) == 0.8
+
+
+def test_stato_corrotto_non_crasha_e_scrittura_atomica(tmp_path, monkeypatch):
+    """Un crash a metà scrittura non deve produrre un crash-loop (S1)."""
+    import src.sentiment.v2 as v2mod
+    monkeypatch.setattr(v2mod, "DIR_STATO", tmp_path)
+    (tmp_path / "stato.json").write_text('{"scores": {truncated')
+    s = v2mod.SentimentV2.__new__(v2mod.SentimentV2)
+    stato = v2mod.SentimentV2._carica_stato(s)
+    assert stato == {"scores": {}, "viste": {}}          # ripartenza pulita
+    assert list(tmp_path.glob("stato.corrotto.*"))       # autopsia conservata
+    s.stato = {"scores": {"BTC": {"score": 0.1, "ts": ADESSO.isoformat()}}, "viste": {}}
+    v2mod.SentimentV2._salva_stato(s)
+    import json as _json
+    assert _json.loads((tmp_path / "stato.json").read_text()) == s.stato
+    assert not (tmp_path / "stato.tmp").exists()         # niente residui
+
+
+def test_dimentica_restituisce_i_titoli(monkeypatch):
+    """Valutazione fallita → i titoli tornano 'mai visti' (S3)."""
+    from src.sentiment.v2 import dimentica
+    nuovi, viste = novita(["SEC approva ETF SOL"], {}, ADESSO, spazio="SOL")
+    assert len(nuovi) == 1
+    viste = dimentica(nuovi, viste, spazio="SOL")
+    di_nuovo, _ = novita(["SEC approva ETF SOL"], viste, ADESSO, spazio="SOL")
+    assert len(di_nuovo) == 1                            # riacquisibile
+
+
+def test_passo_macro_errore_non_brucia_i_titoli():
+    """La stessa garanzia S3 sul canale macro."""
+    import asyncio
+    from src.sentiment.macro import passo_macro, SPAZIO_VISTE
+
+    async def rotto(nuovi):
+        raise RuntimeError("Ollama giù")
+
+    async def buono(nuovi):
+        return -0.4
+
+    async def scenario():
+        r1, viste = await passo_macro(["[SEC] Enforcement"], None, {}, ADESSO, rotto)
+        assert r1["stato"] == "errore"
+        r2, _ = await passo_macro(["[SEC] Enforcement"], None, viste, ADESSO, buono)
+        assert r2["stato"] == "nuovo" and r2["fresco"] == -0.4   # rivalutata!
+
+    asyncio.run(scenario())

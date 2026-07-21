@@ -1,6 +1,7 @@
 """
 Client Redis con connessione asincrona
 """
+import asyncio
 import json
 import os
 import redis.asyncio as aioredis
@@ -18,17 +19,29 @@ class RedisClient:
         self.redis: Optional[aioredis.Redis] = None
         self._pubsub: Optional[aioredis.client.PubSub] = None
 
-    async def connect(self):
-        try:
-            self.redis = await aioredis.from_url(
-                f"redis://{self.host}:{self.port}/{self.db}",
-                decode_responses=True
-            )
-            logger.info("✅ Redis connesso")
-            return self.redis
-        except Exception as e:
-            logger.error(f"❌ Errore connessione Redis: {e}")
-            return None
+    async def connect(self, retry_forever: bool = True):
+        """Riprova finché Redis non risponde (revisione 2026-07-21, S6):
+        il vecchio 'ritorna None e avanti' produceva servizi zombie — vivi
+        per systemd, ma con ogni set/publish che falliva per sempre.
+        retry_forever=False mantiene il vecchio contratto per i chiamanti
+        che gestiscono da soli il fallimento."""
+        attesa = 1
+        while True:
+            try:
+                self.redis = await aioredis.from_url(
+                    f"redis://{self.host}:{self.port}/{self.db}",
+                    decode_responses=True
+                )
+                await self.redis.ping()
+                logger.info("✅ Redis connesso")
+                return self.redis
+            except Exception as e:
+                logger.error(f"❌ Errore connessione Redis: {e}"
+                             + (f" — riprovo tra {attesa}s" if retry_forever else ""))
+                if not retry_forever:
+                    return None
+                await asyncio.sleep(attesa)
+                attesa = min(attesa * 2, 30)
 
     async def set(self, key: str, value: Any):
         if isinstance(value, (dict, list)):

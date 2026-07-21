@@ -413,6 +413,16 @@ class TradingEngine:
             self._record_signal(signal, "ALREADY_OPEN", weighted_confidence)
             return
 
+        # revisione 2026-07-21 (E4): il gate del breaker è verificato una volta
+        # a inizio segnale, ma la chiusura del reverse (o un altro simbolo che
+        # chiude durante gli await) può averlo fatto scattare nel frattempo.
+        # Ricontrolliamo qui, l'ultimo istante prima di impegnare capitale.
+        if self.circuit_breaker_enabled and self.circuit_breaker.is_tripped():
+            logger.warning(f"⛔ Circuit breaker scattato durante l'apertura: {symbol} non aperto")
+            self._record_signal(signal, "CIRCUIT_BREAKER", weighted_confidence,
+                                detail=self.circuit_breaker.status().get("reason"))
+            return
+
         price = self.latest_prices.get(symbol, 0)
         if price <= 0:
             price = await self._get_price_rest(symbol)
@@ -476,6 +486,15 @@ class TradingEngine:
 
         quantity = position_size / price
         quantity = round(quantity, 3)
+        # revisione 2026-07-21 (E9): con asset ad alto prezzo e capitale ridotto
+        # l'arrotondamento a 3 decimali può dare 0.0 → posizione zombie che
+        # occupa il simbolo con PnL identicamente 0 fino a MAX_HOLDING.
+        if quantity <= 0:
+            logger.warning(f"⚠️ Quantità arrotondata a 0 per {symbol} "
+                           f"(size {position_size:.2f} / prezzo {price:.2f}): non aperta")
+            self._record_signal(signal, "QTY_ZERO", weighted_confidence,
+                                detail=f"size {position_size:.2f} insufficiente a prezzo {price:.2f}")
+            return
 
         if self.dynamic_exit_enabled and exit_model:
             stop_loss, take_profit = exit_model.calculate_exit_levels(price, side)
@@ -507,7 +526,11 @@ class TradingEngine:
         logger.info(f"🚀 Posizione APERTA: {symbol} {side} {quantity:.4f} @ {price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f}")
         self._record_signal(signal, opened_outcome, weighted_confidence,
                             detail=f"{side} {quantity:.4f} @ {price:.4f}")
-        notifier.notify_position_opened(symbol, side, price, quantity, stop_loss, take_profit)
+        # revisione 2026-07-21 (E8): notifica in un thread — requests/smtplib
+        # sincroni nel percorso caldo congelavano l'intero loop asyncio (niente
+        # tick, niente SL su TUTTI i simboli) a ogni hiccup di Telegram/SMTP.
+        asyncio.create_task(asyncio.to_thread(
+            notifier.notify_position_opened, symbol, side, price, quantity, stop_loss, take_profit))
 
     async def _close_position(self, symbol: str, reason: str = "MANUAL", price: float = None):
         if symbol not in self.positions:
@@ -544,7 +567,8 @@ class TradingEngine:
             f"📉 Posizione CHIUSA: {symbol} | PnL: {pnl:.2f} USDT "
             f"(lordo {pnl_gross:.2f}, fee {fees:.2f}) | Capitale: {self.capital:.2f} | Motivo: {reason}"
         )
-        notifier.notify_position_closed(symbol, position.side, position.entry_price, price, pnl, reason)
+        asyncio.create_task(asyncio.to_thread(          # E8: fuori dal loop caldo
+            notifier.notify_position_closed, symbol, position.side, position.entry_price, price, pnl, reason))
         self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason,
                                  pnl_gross=pnl_gross, fees=fees)
 
@@ -592,6 +616,19 @@ class TradingEngine:
                     else:
                         pnl = (position.entry_price - price) * position.quantity
                     position.pnl = pnl
+
+                # revisione 2026-07-21 (E3): SL/TP di BACKSTOP anche qui, non
+                # solo sui tick WebSocket. Un simbolo aggiunto a caldo o con lo
+                # stream morto restava senza stop e veniva chiuso da MAX_HOLDING
+                # al prezzo di entrata, nascondendo la perdita. Se il prezzo di
+                # tick è stantio, lo prendiamo via REST.
+                prezzo_uscita = self.latest_prices.get(symbol)
+                if prezzo_uscita is None:
+                    prezzo_uscita = await self._get_price_rest(symbol)
+                if prezzo_uscita and prezzo_uscita > 0:
+                    await self._check_exit_conditions(symbol, prezzo_uscita)
+                    if symbol not in self.positions or not self.positions[symbol].is_open:
+                        continue          # chiusa dal backstop, non valutare MAX_HOLDING
 
                 entry_time = position.entry_time
                 if entry_time.tzinfo is None:

@@ -119,17 +119,21 @@ class CandleFeed:
         # n_trades e taker_buy_base sono l'order flow: fino al 2026-07-16
         # venivano scaricati e scartati qui. Sono l'unica informazione che ha
         # superato il gate walk-forward (src/shared/features.py).
+        # close_time serve per decidere se l'ultima candela è chiusa (I5).
+        now_ms = pd.Timestamp.now(tz="utc").value // 1_000_000
+        ultima_chiusa = float(df["close_time"].iloc[-1]) < now_ms
         df = df[["open_time", "open", "high", "low", "close", "volume",
                  "n_trades", "taker_buy_base"]].astype(float)
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         df = df.set_index("open_time")
 
-        # L'ultima riga è la candela in formazione (parziale): la scartiamo.
-        # In training tutte le candele sono complete; usare una candela
-        # parziale (volume_ratio artificialmente basso, ecc.) reintrodurrebbe
-        # skew. Effetto collaterale voluto: le feature cambiano solo alla
-        # chiusura di ogni candela.
-        df = df.iloc[:-1]
+        # Scartiamo l'ultima riga SOLO se è la candela in formazione (parziale):
+        # usare una candela parziale reintrodurrebbe skew. Ma se la richiesta
+        # atterra dopo la chiusura e prima che Binance apra la nuova, l'ultima
+        # riga è già completa e va tenuta (revisione 2026-07-21, I5: scartarla
+        # sempre significava valutare su dati di due candele fa).
+        if not ultima_chiusa:
+            df = df.iloc[:-1]
 
         self._cache[symbol] = df
         self._last_fetch[symbol] = now

@@ -241,9 +241,10 @@ def test_direction_cap_none_means_uncapped():
 # ---------- circuit breaker (usa un DatetimeIndex vero: record_trade/
 # is_tripped fanno aritmetica su datetime, un RangeIndex intero non basta) ----------
 
-def _flat_candles_dt(n=100, price=100.0, volume=10.0, start="2026-01-01") -> pd.DataFrame:
+def _flat_candles_dt(n=100, price=100.0, volume=10.0, start="2026-01-01",
+                     freq="1h") -> pd.DataFrame:
     df = _flat_candles(n=n, price=price, volume=volume)
-    df.index = pd.date_range(start, periods=n, freq="1h")
+    df.index = pd.date_range(start, periods=n, freq=freq)
     return df
 
 
@@ -277,11 +278,14 @@ def test_circuit_breaker_stops_reopening_after_consecutive_losses():
 
 
 def test_circuit_breaker_daily_loss_caps_trades_per_calendar_day():
-    candles = {"BTCUSDT": _flat_candles_dt(n=200)}
+    # Candele a 15 min su ~2 giorni: molti trade possibili al giorno (il
+    # rate naturale supera il cap), così il cap giornaliero morde davvero, e
+    # lo span di 2 giorni esercita anche il RIENTRO al cambio giorno (E1).
+    candles = {"BTCUSDT": _flat_candles_dt(n=200, freq="15min")}
     model = StubModel(lambda i: BUY)
     # Ogni trade perde ~0.21 USDT (fee+slippage): 5 bastano a superare lo
     # 0.1% di 1000 USDT in un giorno, poi il breaker resta attivo fino al
-    # prossimo giorno UTC (a differenza del cooldown, non si autoresetta prima).
+    # prossimo giorno UTC — dove correttamente rientra (revisione 2026-07-21, E1).
     breaker_params = CircuitBreakerParams(
         max_consecutive_losses=None, max_daily_loss_pct=0.001, max_drawdown_pct=None,
     )

@@ -17,8 +17,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.shared.candle_feed import CandleFeed
 
 
-def _fake_klines_response(n=5, start_ms=1_700_000_000_000):
-    """n righe + 1 candela in formazione (scartata da get_candles)."""
+def _fake_klines_response(n=5):
+    """n candele chiuse + 1 in formazione (l'ultima, con close_time nel
+    FUTURO come manda Binance) — get_candles scarta solo quella parziale
+    (revisione 2026-07-21, I5: lo scarto è condizionato a close_time)."""
+    import time
+    now_ms = int(time.time() * 1000)
+    # l'ultima candela apre ora e chiude tra un'ora: è quella in formazione
+    start_ms = now_ms - n * 3_600_000
     rows = []
     for i in range(n + 1):
         t = start_ms + i * 3_600_000

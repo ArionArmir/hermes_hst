@@ -224,3 +224,24 @@ def test_manifest_fire_drill_ogni_deriva_urla(tmp_path, monkeypatch):
     # manifest illeggibile: problema, non silenzio
     assert check_config_drift(_client_con(dichiarata),
                               tmp_path / "inesistente.yaml") is not None
+
+
+def test_inference_fresca_rileva_muta():
+    """Revisione 2026-07-21: ml_conf_* stantio = inference muta con heartbeat
+    verde, deve urlare."""
+    import json
+    from unittest.mock import MagicMock
+    from watchdog import check_inference_fresca
+    client = MagicMock()
+    client.scan_iter.return_value = ["ml_conf_BTCUSDT", "ml_conf_ETHUSDT"]
+    fresco = (NOW - timedelta(seconds=30)).isoformat()
+    vecchio = (NOW - timedelta(seconds=1200)).isoformat()
+    # almeno uno fresco → sano
+    client.mget.return_value = [json.dumps({"ts": fresco}), json.dumps({"ts": vecchio})]
+    with patch("watchdog.datetime") as dt:
+        dt.now.return_value = NOW
+        dt.fromisoformat = datetime.fromisoformat
+        assert check_inference_fresca(client) is None
+        # tutti vecchi → allarme
+        client.mget.return_value = [json.dumps({"ts": vecchio}), json.dumps({"ts": vecchio})]
+        assert check_inference_fresca(client) is not None

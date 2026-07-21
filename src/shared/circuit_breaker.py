@@ -122,6 +122,13 @@ class CircuitBreaker:
 
     def is_tripped(self, now: Optional[datetime] = None) -> bool:
         now = now or datetime.now(timezone.utc)
+        # revisione 2026-07-21 (E1): il trip giornaliero deve rientrare al
+        # cambio di giorno UTC anche se NESSUN trade si chiude nel frattempo.
+        # Prima rientrava solo dentro record_trade: se scattava all'ultima
+        # chiusura, restava attivo per sempre (blocca le aperture → niente
+        # più chiusure → mai più record_trade).
+        if self._daily_trip and now.strftime("%Y-%m-%d") != self._current_day:
+            self._daily_trip = False
         if self._drawdown_trip or self._daily_trip:
             return True
         if self._tripped_until is not None:
@@ -187,6 +194,13 @@ class CircuitBreaker:
         if not today_trades.empty:
             first_today = today_trades.iloc[0]
             self._day_start_capital = float(first_today["capital_after"]) - float(first_today["pnl"])
+            # revisione 2026-07-21 (E1b): ricostruisci anche il trip giornaliero
+            # — un crash a metà giornata perdente non deve azzerare la protezione
+            if self.params.max_daily_loss_pct is not None and self._day_start_capital:
+                daily_pct = (current_capital - self._day_start_capital) / self._day_start_capital
+                if daily_pct <= -self.params.max_daily_loss_pct:
+                    self._daily_trip = True
+                    self._trip_reason = f"perdita giornaliera {daily_pct:.1%} (ricostruita dopo riavvio)"
 
         if (self.params.max_consecutive_losses is not None
                 and self._consecutive_losses >= self.params.max_consecutive_losses):
