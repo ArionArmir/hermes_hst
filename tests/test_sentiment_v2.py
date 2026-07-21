@@ -63,3 +63,43 @@ def test_degenere_identici_e_scala():
     assert degenere({"A": -0.8, "B": -0.7, "C": -0.6, "D": -0.5})   # la scala di v1
     assert not degenere({"A": 0.0, "B": 0.0, "C": 0.0})             # zeri: non degenere
     assert not degenere({"A": 0.3, "B": -0.2, "C": 0.7})
+
+
+def test_passo_macro_stati_e_novita():
+    """Canale macro: stessa grammatica della v2 (novità nello spazio MACRO,
+    decadimento, stati dichiarati), valutatore iniettato — senza Ollama."""
+    import asyncio
+    from src.sentiment.macro import passo_macro
+
+    async def valuta_fisso(nuovi):
+        return -0.6
+
+    async def scenario():
+        # prima volta: notizie nuove → stato nuovo, blend 50/50 con 0
+        r1, viste = await passo_macro(["[BCE] Rate decision"], None, {}, ADESSO,
+                                      valuta_fisso)
+        assert r1["stato"] == "nuovo" and r1["score"] == -0.3
+        # stesso titolo dopo: niente di nuovo → decade
+        prec = {"score": r1["score"], "ts": ADESSO.isoformat()}
+        r2, viste = await passo_macro(["[BCE] Rate decision"], prec, viste,
+                                      ADESSO + timedelta(hours=6), valuta_fisso)
+        assert r2["stato"] == "decaduto" and abs(r2["score"] - (-0.15)) < 1e-9
+        # valutatore che esplode → errore, si tiene il decaduto
+        async def valuta_rotto(nuovi):
+            raise RuntimeError("giù")
+        r3, _ = await passo_macro(["[SEC] Nuova notizia"], prec, viste,
+                                  ADESSO + timedelta(hours=6), valuta_rotto)
+        assert r3["stato"] == "errore" and abs(r3["score"] - (-0.15)) < 1e-9
+
+    asyncio.run(scenario())
+
+
+def test_titoli_macro_prefissati_e_spazio_separato():
+    """La memoria macro non interferisce con quella per-asset: stesso titolo,
+    spazi diversi, novità indipendenti."""
+    from src.sentiment.v2 import novita
+    from src.sentiment.macro import SPAZIO_VISTE
+    nuovi, viste = novita(["Rate decision"], {}, ADESSO, spazio=SPAZIO_VISTE)
+    assert len(nuovi) == 1
+    nuovi_btc, _ = novita(["Rate decision"], viste, ADESSO, spazio="BTC")
+    assert len(nuovi_btc) == 1

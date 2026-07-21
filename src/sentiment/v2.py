@@ -107,8 +107,7 @@ class SentimentV2:
     def _salva_stato(self):
         (DIR_STATO / "stato.json").write_text(json.dumps(self.stato))
 
-    async def _modello(self, asset: str, titoli: list[str]) -> float | None:
-        prompt = PROMPT.format(asset=asset, titoli="\n".join(f"- {t}" for t in titoli))
+    async def _modello_grezzo(self, prompt: str) -> float | None:
         payload = {"model": MODELLO, "prompt": prompt, "stream": False,
                    "format": "json", "options": {"num_predict": 64}}
         async with aiohttp.ClientSession() as sess:
@@ -118,6 +117,10 @@ class SentimentV2:
                     return None
                 dati = await resp.json()
         return estrai_score(dati.get("response", ""))
+
+    async def _modello(self, asset: str, titoli: list[str]) -> float | None:
+        return await self._modello_grezzo(
+            PROMPT.format(asset=asset, titoli="\n".join(f"- {t}" for t in titoli)))
 
     async def _asset(self, asset: str, titoli: list[str], adesso: datetime) -> dict:
         """Punteggio + stato per un asset. La telemetria è il prodotto:
@@ -175,13 +178,35 @@ class SentimentV2:
                                  json.dumps({**r, "ts": adesso.isoformat()}))
         aggregate = round(sum(r["score"] for r in risultati.values()) / len(risultati), 4)
         await self.redis.set("sentiment_v2", str(aggregate))
+
+        # canale macro LOG-ONLY (fonti istituzionali): pubblica e registra,
+        # ma NON entra nell'aggregate né nei punteggi per asset fino alla
+        # lettura del 2026-08-04 — la validazione resta pulita
+        macro = None
+        try:
+            from src.sentiment.macro import passo_macro, titoli_istituzionali
+            titoli = await titoli_istituzionali()
+
+            async def valuta(nuovi):
+                riga = "\n".join(f"- {t}" for t in nuovi)
+                from src.sentiment.macro import PROMPT_MACRO
+                return await self._modello_grezzo(PROMPT_MACRO.format(titoli=riga))
+
+            macro, self.stato["viste"] = await passo_macro(
+                titoli, self.stato.get("macro"), self.stato["viste"], adesso, valuta)
+            self.stato["macro"] = {"score": macro["score"], "ts": adesso.isoformat()}
+            await self.redis.set("sentiment_v2_macro",
+                                 json.dumps({**macro, "ts": adesso.isoformat()}))
+        except Exception as e:
+            logger.error(f"canale macro fallito (non bloccante): {e}")
         self._salva_stato()
 
         with open(DIR_STATO / "storia.jsonl", "a") as f:
             f.write(json.dumps({"ts": adesso.isoformat(), "aggregate": aggregate,
-                                "per_asset": risultati}) + "\n")
+                                "per_asset": risultati, "macro": macro}) + "\n")
         stati = {a: r["stato"] for a, r in risultati.items()}
-        logger.info(f"v2: aggregate {aggregate:+.2f} | stati {stati}")
+        logger.info(f"v2: aggregate {aggregate:+.2f} | stati {stati}"
+                    + (f" | macro {macro['score']:+.2f} ({macro['stato']})" if macro else ""))
 
     async def run(self):
         logger.info("Sentiment v2 in ombra: il motore non mi legge, forward intatto")

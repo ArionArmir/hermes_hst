@@ -57,6 +57,14 @@ dimostrata. Limite noto: l'IP del gateway (172.20.96.1) può cambiare a un
 riavvio di WSL; in quel caso il check Ollama del watchdog scatta entro un
 minuto e la v1 degrada al suo zero spiegato.
 
+## Annotazione — canale macro in raccolta (dal 2026-07-21 08:45 UTC)
+
+Attivo un canale LOG-ONLY da fonti istituzionali primarie (BCE, Fed, SEC,
+CFTC, ESMA): punteggio macro unico su `sentiment_v2_macro` e nella storia,
+**escluso dai punteggi v2 e da questi criteri** — la validazione resta
+pulita. L'eventuale regola di miscela va dichiarata dopo la lettura, con
+settimane di dati macro alle spalle invece che a intuito.
+
 ## I tre esiti possibili al 2026-08-04 (dichiarati oggi)
 
 - **PASSA + si vuole la situazione aggiornata** → terminare forward_v1
