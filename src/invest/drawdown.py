@@ -76,9 +76,28 @@ def _fetch_eurusd_monthly() -> pd.Series:
               .groupby(lambda t: t.to_period("M")).last().rename("EURUSD"))
 
 
+def refresh_yahoo_cache(nomi: tuple[str, ...] = ("SPX", "EURUSD", "VWCE")) -> dict:
+    """Riscarica e sovrascrive i parquet mensili dei fondi. La dashboard NON
+    scarica mai (load_asset_monthly legge il parquet locale): a tenerlo fresco
+    ci pensa questo job sul timer mensile — cadenza giusta per dati mensili.
+    Senza, il parquet nasceva e non si aggiornava mai (simulazione congelata).
+    Tollerante al fallimento per-simbolo: uno che non risponde non blocca gli altri."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    esiti = {}
+    for name in nomi:
+        try:
+            s = _fetch_eurusd_monthly() if name == "EURUSD" else _fetch_yahoo_monthly(name)
+            s.rename(name).to_frame().to_parquet(CACHE / f"{name}_monthly.parquet")
+            esiti[name] = f"{len(s)} mesi → {s.index[-1]}"
+        except Exception as e:
+            esiti[name] = f"ERRORE: {type(e).__name__}"
+    return esiti
+
+
 def load_asset_monthly(name: str, in_eur: bool = True) -> pd.Series:
     """Serie mensile di un asset: 'SPX' da Yahoo, 'EURUSD' da FRED (cache
-    locale), altrimenti un simbolo crypto dai parquet spot già in casa."""
+    locale, aggiornata dal job mensile refresh_yahoo_cache), altrimenti un
+    simbolo crypto dai parquet spot già in casa."""
     CACHE.mkdir(parents=True, exist_ok=True)
     if name in YAHOO:
         cache = CACHE / f"{name}_monthly.parquet"

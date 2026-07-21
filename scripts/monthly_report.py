@@ -30,8 +30,7 @@ def calendario_esperimenti() -> list[str]:
     # forward_v1: trade accumulati verso i 100 (o lettura al 2027-01-19)
     try:
         from src.shared import store
-        segnali = store.read_signals(limit=100_000)
-        aperti = int((segnali["outcome"] == "OPENED").sum()) if len(segnali) else 0
+        aperti = store.count_signals("OPENED")
         righe.append(f"  forward_v1 (soglia 0.50): {aperti}/100 trade "
                      f"| lettura entro il 2027-01-19")
     except Exception as e:

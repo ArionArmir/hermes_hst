@@ -26,14 +26,14 @@ with st.container(border=True):
         "futuri. **Prior dichiarato: ≈ 0.** Unico cambio: soglia 0.55→0.50; "
         "ogni altro ritocco termina l'esperimento.")
 
-segnali = store.read_signals(limit=100_000)
-aperti = int((segnali["outcome"] == "OPENED").sum()) if len(segnali) else 0
+aperti = store.count_signals("OPENED")
+valutati = store.count_signals()
 giorni = (date.today() - AVVIO).days
 with st.container(horizontal=True):
     st.metric("Trade aperti", f"{aperti}/{TRADE_RICHIESTI}", border=True)
     st.metric("Giorni di esperimento", giorni, border=True)
     st.metric("Lettura entro", DATA_LETTURA.isoformat(), border=True)
-    st.metric("Segnali valutati dai filtri", len(segnali), border=True)
+    st.metric("Segnali valutati dai filtri", valutati, border=True)
 st.progress(min(1.0, aperti / TRADE_RICHIESTI),
             text=f"verdetto a {TRADE_RICHIESTI} trade o al {DATA_LETTURA} — "
                  "nessuna lettura intermedia ha potere decisionale")
@@ -71,8 +71,9 @@ else:
 
 # ---- decisioni ------------------------------------------------------------
 st.subheader("Decisioni (segnali sopra soglia e loro esito)")
+segnali = store.read_signals(limit=50)          # solo per il display: bounded
 if len(segnali):
-    st.dataframe(segnali.head(50), hide_index=True)
+    st.dataframe(segnali, hide_index=True)
 else:
     st.info("Nessun segnale ha ancora superato la soglia — coerente con "
             "l'aspettativa pre-registrata (~3.4 trade/settimana a macchina "

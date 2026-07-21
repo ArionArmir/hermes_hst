@@ -135,3 +135,24 @@ def test_wal_allows_concurrent_reader(monkeypatch, tmp_path):
     store.insert_trade(symbol="B", side="short", entry=2, exit_price=1, pnl=1, reason="Y")
     second = store.read_trades()
     assert len(first) == 1 and len(second) == 2
+
+
+def test_count_signals_conta_senza_leggere_tutto(monkeypatch, tmp_path):
+    """count_signals sostituisce read_signals(100k)+sum: stessi numeri,
+    ma una COUNT invece di leggere l'intera tabella."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
+    for esito in ["OPENED", "OPENED", "LOW_CONFIDENCE", "SENTIMENT_VETO"]:
+        store.insert_signal(symbol="BTCUSDT", action="buy", outcome=esito, confidence=0.9)
+
+    assert store.count_signals() == 4
+    assert store.count_signals("OPENED") == 2
+    assert store.count_signals("MAI_ESISTITO") == 0
+    # coerenza col metodo che sostituisce
+    df = store.read_signals(limit=100_000)
+    assert store.count_signals() == len(df)
+    assert store.count_signals("OPENED") == int((df["outcome"] == "OPENED").sum())
+
+
+def test_count_signals_db_vuoto(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "vuoto.db")
+    assert store.count_signals() == 0 and store.count_signals("OPENED") == 0

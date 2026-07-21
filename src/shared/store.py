@@ -153,5 +153,18 @@ def read_signals(limit: int = 200, db_path: Optional[Path] = None) -> pd.DataFra
     return _read_sql("SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", limit, db_path)
 
 
+def count_signals(outcome: Optional[str] = None, db_path: Optional[Path] = None) -> int:
+    """Conteggio O(1)-ish dei segnali (tutti, o per outcome). Sostituisce il
+    pattern 'read_signals(limit=100_000) poi sum' che leggeva l'intera tabella
+    solo per contare — inefficiente man mano che i segnali si accumulano."""
+    query = "SELECT COUNT(*) FROM signals"
+    params: tuple = ()
+    if outcome is not None:
+        query += " WHERE outcome = ?"
+        params = (outcome,)
+    with _connect(db_path) as conn:
+        return int(conn.execute(query, params).fetchone()[0])
+
+
 def read_sentiment(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFrame:
     return _read_sql("SELECT * FROM sentiment ORDER BY timestamp DESC LIMIT ?", limit, db_path)

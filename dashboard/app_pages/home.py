@@ -224,8 +224,7 @@ def render_nastro_mercato():
 
 @st.cache_data(ttl="60s")
 def _trade_aperti_forward() -> int:
-    segnali = store.read_signals(limit=100_000)
-    return int((segnali["outcome"] == "OPENED").sum()) if len(segnali) else 0
+    return store.count_signals("OPENED")
 
 
 @st.fragment(run_every="60s")
