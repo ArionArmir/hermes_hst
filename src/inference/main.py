@@ -42,6 +42,11 @@ class MLInference:
         self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
         self.config = None
+        # metadati del modello pubblicati su Redis a ogni (ri)caricamento, così
+        # la pagina Analisi li LEGGE invece di ricaricare il pickle (~650ms) al
+        # primo render — e mostra il modello DAVVERO in servizio, hot-reload inclusi
+        self.model_meta = None
+        self._meta_da_pubblicare = False
 
     async def initialize(self):
         logger.info("🧠 Avvio ML Inference con dati reali...")
@@ -129,6 +134,25 @@ class MLInference:
             logger.info("🔄 Nuovo champion pubblicato dal trainer, ricarico il modello...")
             self._load_model()
 
+    def _imposta_meta(self, model, trained_names: list, compatibile: bool):
+        """Prepara i metadati del modello per la dashboard (pubblicati dal loop).
+        Include data di training (mtime del file), feature, classi, importanze
+        e compatibilità — tutto ciò che la pagina Analisi mostra."""
+        try:
+            mtime = os.path.getmtime(self.model_path)
+            self.model_meta = {
+                "disponibile": True, "compatibile": compatibile,
+                "trained_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
+                "n_classi": len(model.classes_),
+                "feature": trained_names,
+                "importanze": [float(x) for x in model.feature_importances_],
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.warning(f"metadati modello non calcolabili: {e}")
+            self.model_meta = {"disponibile": True, "compatibile": compatibile}
+        self._meta_da_pubblicare = True
+
     def _load_model(self):
         try:
             if os.path.exists(self.model_path):
@@ -143,6 +167,7 @@ class MLInference:
                         f"❌ Modello incompatibile: addestrato su {trained_names}, "
                         f"attese {FEATURE_COLS}. Rilanciare train_all_models.py. Nessun segnale verrà emesso."
                     )
+                    self._imposta_meta(model, trained_names, compatibile=False)
                     self.model = None
                     return
                 expected_classes = [TARGET_DOWN, TARGET_FLAT, TARGET_UP]
@@ -151,9 +176,11 @@ class MLInference:
                         f"❌ Modello incompatibile: classi {list(model.classes_)}, attese {expected_classes} "
                         f"(down/flat/up). Rilanciare train_all_models.py. Nessun segnale verrà emesso."
                     )
+                    self._imposta_meta(model, trained_names, compatibile=False)
                     self.model = None
                     return
                 self.model = model
+                self._imposta_meta(model, trained_names, compatibile=True)
                 logger.info(
                     f"✅ Modello caricato da {self.model_path} "
                     f"({len(trained_names)} feature e {len(expected_classes)} classi validate)"
@@ -161,6 +188,9 @@ class MLInference:
             else:
                 logger.warning(f"⚠️ Modello non trovato: {self.model_path}")
                 self.model = None
+                self.model_meta = {"disponibile": False,
+                                   "ts": datetime.now(timezone.utc).isoformat()}
+                self._meta_da_pubblicare = True
         except Exception as e:
             # revisione 2026-07-21 (I3): un load fallito su file a metà
             # scrittura (il trainer promuove con shutil.copy, non atomico)
@@ -236,6 +266,9 @@ class MLInference:
             try:
                 await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
                 await self._publish_candle_feed_health()
+                if self._meta_da_pubblicare:      # pubblica-al-cambio, non ogni ciclo
+                    await self.redis.set('model_meta', json.dumps(self.model_meta))
+                    self._meta_da_pubblicare = False
 
                 if self.model is None:
                     await asyncio.sleep(1)

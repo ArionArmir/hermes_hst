@@ -224,3 +224,43 @@ def test_chiusura_abortita_se_scrittura_durevole_fallisce():
     assert pos.is_open is True                                # chiusura abortita
     assert eng.capital == 1000.0                              # capitale NON mutato
     eng.redis.set.assert_not_called()                         # Redis NON toccato
+
+
+def test_imposta_meta_schema_per_dashboard(tmp_path):
+    """L'inference prepara i metadati del modello per la dashboard: schema
+    completo (feature, classi, importanze, compatibile, trained_at) così la
+    pagina Analisi legge da Redis invece di ricaricare il pickle (~650ms)."""
+    from types import SimpleNamespace
+    from src.inference.main import MLInference
+
+    modello_file = tmp_path / "champion.pkl"
+    modello_file.write_bytes(b"x")
+    fake_model = SimpleNamespace(
+        classes_=[0, 1, 2],
+        feature_importances_=[0.1, 0.2, 0.7],
+    )
+    inf = MLInference.__new__(MLInference)
+    inf.model_path = str(modello_file)
+    inf.model_meta = None
+    inf._meta_da_pubblicare = False
+
+    inf._imposta_meta(fake_model, ["f1", "f2", "f3"], compatibile=True)
+    m = inf.model_meta
+    assert inf._meta_da_pubblicare is True
+    for campo in ("disponibile", "compatibile", "trained_at", "n_classi", "feature", "importanze", "ts"):
+        assert campo in m, f"manca {campo}"
+    assert m["compatibile"] is True and m["n_classi"] == 3
+    assert m["feature"] == ["f1", "f2", "f3"]
+    assert m["importanze"] == [0.1, 0.2, 0.7]     # float JSON-serializzabili
+
+
+def test_imposta_meta_incompatibile():
+    from types import SimpleNamespace
+    from src.inference.main import MLInference
+    inf = MLInference.__new__(MLInference)
+    inf.model_path = "/non/esiste.pkl"            # getmtime fallirà → ramo di fallback
+    inf.model_meta = None
+    inf._meta_da_pubblicare = False
+    fake = SimpleNamespace(classes_=[0, 1, 2], feature_importances_=[1.0])
+    inf._imposta_meta(fake, ["f1"], compatibile=False)
+    assert inf.model_meta["compatibile"] is False and inf._meta_da_pubblicare is True
