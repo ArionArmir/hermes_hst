@@ -93,10 +93,25 @@ punisce i cambi che possono alterare gli esiti, e questa deviazione è
 dimostrabilmente priva di effetti. L'incidente resta agli atti; la lettura
 finale dovrà citarlo.
 
-## Esito
+## Esito — TERMINATO il 2026-07-21 (decisione umana, prima della lettura)
 
-*Da compilare SOLO alla data/soglia di lettura dichiarata.*
+**Trade accumulati: 0 in 7.2 giorni** — coerente col ritmo atteso (~1.1/
+settimana): esito nullo, nessuna evidenza sull'ipotesi, nessuna evidenza
+persa. Nessuna metrica compilabile.
 
-- [ ] Trade accumulati: __ · periodo effettivo di uptime: __
-- [ ] Sharpe/trade: __ · IC bootstrap: __
-- [ ] Verdetto vs prior: __
+**Motivo della terminazione**: la revisione del codice del 2026-07-21
+(3 revisori indipendenti, 28 finding, i 5 più gravi verificati riga per
+riga — docs/REVISIONE_2026-07-21.md) ha trovato difetti che minano la
+validità di ogni trade futuro dell'esperimento: fallback config sui
+default hardcoded invisibile al manifest (soglia 0.55/3 simboli),
+nessuna guardia anti-inf nella pipeline live, SL/TP dipendenti dai soli
+tick WebSocket con backstop che chiude al prezzo di entrata. Un
+esperimento i cui risultati richiedono asterischi ha smesso di misurare.
+
+**Cosa segue**: pacchetto di correzioni, poi — dopo il verdetto sentiment
+del 2026-08-04 — un nuovo pre-registro forward_v2 con manifest nuovo e
+finestra intera. Il motore continua a girare come servizio (collaudo dei
+fix), non più come esperimento.
+
+*(Storia della sezione: registro incidenti sopra — la deriva soglia del
+2026-07-20, rientrata con impatto provato nullo, resta agli atti.)*
