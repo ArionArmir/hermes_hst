@@ -100,3 +100,52 @@ def test_breaker_giornaliero_ricostruito_dopo_riavvio():
     trades = pd.DataFrame([{"timestamp": oggi, "pnl": -7.0, "capital_after": 93.0}])
     cb.seed_from_history(trades, current_capital=93.0)           # -7% oggi
     assert cb.is_tripped()                                       # protezione ricostruita
+
+
+def test_reset_manuale_persistito_non_ri_arma(tmp_path):
+    """E2: dopo un reset, un riavvio non deve ripescare il vecchio picco e
+    ri-armare il trip drawdown."""
+    import pandas as pd
+    from src.shared.circuit_breaker import CircuitBreaker, CircuitBreakerParams
+    cb = CircuitBreaker(CircuitBreakerParams(max_drawdown_pct=0.20))
+    # storia: picco 1200, poi -21% a 950 (trip). Reset avvenuto a 950.
+    trades = pd.DataFrame([
+        {"timestamp": "2026-07-21T10:00:00+00:00", "pnl": 200.0, "capital_after": 1200.0},
+        {"timestamp": "2026-07-21T11:00:00+00:00", "pnl": -250.0, "capital_after": 950.0},
+    ])
+    # senza reset: seed ripesca picco 1200 → 950 è -21% → trip
+    cb.seed_from_history(trades, current_capital=950.0)
+    assert cb.is_tripped()
+    # con reset a 950 dopo l'ultimo trade: picco riparte da 950 → niente trip
+    cb2 = CircuitBreaker(CircuitBreakerParams(max_drawdown_pct=0.20))
+    cb2.seed_from_history(trades, current_capital=950.0,
+                          reset_after="2026-07-21T11:00:01+00:00", reset_capital=950.0)
+    assert not cb2.is_tripped()
+
+
+def test_trailing_statico_avanza_e_non_indietreggia():
+    """E6: lo stop_loss statico ratchet segue il prezzo solo in avanti."""
+    from types import SimpleNamespace
+    from src.engine.main import TradingEngine
+    eng = TradingEngine.__new__(TradingEngine)
+    eng.dynamic_exit_enabled = False
+    eng.trailing_stop_pct = 0.02
+    pos = SimpleNamespace(side="long", is_open=True, stop_loss=98.0, trailing_stop=98.0)
+    eng.positions = {"BTCUSDT": pos}
+    eng._ratchet_trailing_statico("BTCUSDT", 105.0)      # sale → stop a 102.9
+    assert abs(pos.stop_loss - 105.0 * 0.98) < 1e-9
+    salito = pos.stop_loss
+    eng._ratchet_trailing_statico("BTCUSDT", 100.0)      # scende → stop NON indietreggia
+    assert pos.stop_loss == salito
+
+
+def test_trailing_statico_spento_col_dinamico():
+    from types import SimpleNamespace
+    from src.engine.main import TradingEngine
+    eng = TradingEngine.__new__(TradingEngine)
+    eng.dynamic_exit_enabled = True                      # dinamico acceso: statico inattivo
+    eng.trailing_stop_pct = 0.02
+    pos = SimpleNamespace(side="long", is_open=True, stop_loss=98.0, trailing_stop=98.0)
+    eng.positions = {"BTCUSDT": pos}
+    eng._ratchet_trailing_statico("BTCUSDT", 105.0)
+    assert pos.stop_loss == 98.0                         # invariato

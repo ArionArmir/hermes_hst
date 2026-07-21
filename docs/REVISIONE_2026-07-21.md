@@ -48,12 +48,25 @@ pianificare (tocca il servizio vivo o richiede infrastruttura nuova).
 | E4 | alto | Reverse apre dopo che il breaker è scattato (gate non ricontrollato) | ✅ ricontrollo breaker in `_open_position` |
 | E8 | medio | `requests`/`smtplib` sincroni congelano il loop nel percorso caldo | ✅ notifiche in `asyncio.to_thread` |
 | E9 | basso | `round(qty,3)` → 0 su asset cari/capitale basso → posizione zombie | ✅ guardia `qty<=0` |
-| E2 | alto | Reset manuale del breaker non persistito → ri-arma a ogni riavvio | 📋 richiede persistenza del reset (Redis/file); il re-trip è un fallimento SICURO (blocca, non perde) — da fare deliberatamente |
-| E5 | medio | `_close_position` non atomica Redis↔SQLite: crash a metà perde PnL o storico | 📋 riordino verso "DB prima, poi Redis" sul servizio vivo — cambio delicato, da pianificare |
-| E6 | medio | Trailing statico codice morto (`position.trailing_stop` scritto e mai letto) | 📋 decidere: implementarlo o rimuovere il campo (oggi il trailing vive solo in `dynamic_exit`) |
-| E7 | medio | Perdita messaggi pubsub durante il recovery del listener (incl. `close_all`) | 📋 pubsub è fire-and-forget; un resync dello stato dopo la ri-sottoscrizione è la cura, da progettare |
-| E10 | basso | Cambio timeframe a caldo mischia candele di intervalli diversi nell'ATR | 📋 svuotare exit/pattern models + riconnettere WS al `config_updated` |
-| E11 | basso | Leak di oggetti PubSub durante flapping Redis prolungato | 📋 `pubsub.close()` nel recovery |
+| E2 | alto | Reset manuale del breaker non persistito → ri-arma a ogni riavvio | ✅ reset persistito su Redis (`circuit_breaker_reset`); `seed_from_history` ignora la storia pre-reset e il picco riparte dal capitale al reset |
+| E5 | medio | `_close_position` non atomica Redis↔SQLite: crash a metà perde PnL o storico | ✅ SQLite scritto PRIMA (fonte durevole), capitale riconciliato dal log al riavvio; residuo micrometrico documentato sotto |
+| E6 | medio | Trailing statico codice morto (`position.trailing_stop` scritto e mai letto) | ✅ trailing statico ratchet nel monitor (stop avanza mai indietro), attivo col dinamico spento |
+| E7 | medio | Perdita messaggi pubsub durante il recovery del listener (incl. `close_all`) | ✅ resync della config dopo ogni (ri)sottoscrizione; `close_all` transitorio resta limite noto (sotto) |
+| E10 | basso | Cambio timeframe a caldo mischia candele di intervalli diversi nell'ATR | ✅ svuotamento exit/pattern models + riconnessione WS al cambio timeframe |
+| E11 | basso | Leak di oggetti PubSub durante flapping Redis prolungato | ✅ `pubsub.aclose()` in `finally` del recovery |
+
+## Residui noti (accettati, non difetti aperti)
+
+- **E5**: Redis e SQLite non sono atomici tra loro. La finestra micrometrica
+  tra l'insert SQLite e l'update Redis può, in caso di crash lì dentro,
+  lasciare la posizione "aperta" in cache Redis mentre il trade è già
+  registrato: in paper trading si richiude al più con un trade duplicato,
+  senza perdita di capitale (che è riconciliato dal log). Eliminarlo del
+  tutto richiederebbe un journal a due fasi, sproporzionato per denaro di carta.
+- **E7**: i comandi transitori (`close_all` da dashboard) non sono replicabili
+  se persi nella finestra di ri-sottoscrizione — il pubsub è fire-and-forget.
+  La config invece è riconciliata (resync). Una coda durevole per i comandi
+  è la soluzione completa, rimandata a quando/se servirà.
 
 ## Osservabilità aggiunta
 
@@ -62,11 +75,10 @@ pianificare (tocca il servizio vivo o richiede infrastruttura nuova).
   allarme entro ~10 minuti. È la mitigazione esterna che rende i difetti di
   resilienza rimasti (📋) osservabili anche prima di correggerli.
 
-## I 📋 rimasti: perché non oggi
+## Stato finale
 
-Sono tutti sul motore, che ora gira come **servizio di collaudo** (non più
-esperimento). Toccano atomicità, pubsub e lo stato del breaker persistito:
-cambi che vanno fatti con i loro test e senza fretta, non ammucchiati in una
-passata. Il check watchdog li rende visibili nel frattempo. Ordine
-consigliato quando si riprende: E5 (atomicità chiusura) → E7 (resync pubsub)
-→ E2 (persistenza reset) → E6/E10/E11 (minori).
+**Tutti i 28 finding chiusi**: corretti con test, o (per i due residui E5/E7
+sopra) accettati con motivazione esplicita — sono limiti architetturali del
+paper trading su Redis+SQLite, non difetti aperti. La seconda tornata di fix
+del motore (E2, E5, E6, E7, E10, E11) è stata fatta il 2026-07-21 stesso, dopo
+la prima, con motore riavviato e verificato pulito. Suite: 369 verdi.

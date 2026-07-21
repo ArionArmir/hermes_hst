@@ -19,8 +19,14 @@ from src.shared import store
 
 
 class FakeRedis:
+    def __init__(self):
+        self._store = {}
+
     async def set(self, key, value):
-        pass
+        self._store[key] = value
+
+    async def get(self, key):
+        return self._store.get(key)
 
 
 def _make_engine() -> TradingEngine:

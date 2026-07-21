@@ -40,6 +40,7 @@ class TradingEngine:
 
         self.positions: Dict[str, Position] = {}
         self.latest_prices: Dict[str, float] = {}
+        self._richiedi_riconnessione_ws = False   # E10: cambio timeframe → riconnetti
         # Ultima chiusura per simbolo (solo in memoria: dopo un riavvio il
         # cooldown di ri-ingresso riparte pulito, scelta accettabile)
         self.last_close_time: Dict[str, datetime] = {}
@@ -158,6 +159,17 @@ class TradingEngine:
         if config.timeframe != self.candle_feed.interval:
             logger.info(f"🕐 Timeframe candele: {self.candle_feed.interval} → {config.timeframe}")
             self.candle_feed = CandleFeed(interval=config.timeframe, limit=30)
+            # revisione 2026-07-21 (E10): svuota i modelli ATR/pattern — la loro
+            # finestra conterrebbe candele del vecchio intervallo, dando SL/TP
+            # su una volatilità mista senza senso finché non si svuota da sola.
+            # E richiedi la riconnessione del WS (che manda ancora kline del
+            # vecchio intervallo fino alla prossima disconnessione).
+            self.exit_models.clear()
+            self.pattern_models.clear()
+            self._richiedi_riconnessione_ws = True
+            for symbol in self.symbols:
+                self.exit_models[symbol.upper()] = _build_exit_model(symbol.upper())
+                self.pattern_models[symbol.upper()] = VolumePatternAnalyzer(window=10)
         self.ml_confidence_threshold = config.ml_confidence_threshold
         self.sentiment_weight = config.sentiment_weight
         self.reverse_trading_enabled = config.reverse_trading_enabled
@@ -208,16 +220,40 @@ class TradingEngine:
                     logger.error(f"❌ Errore caricamento posizione {symbol}: {e}")
 
     async def _load_capital_from_redis(self):
-        """Il capitale paper sopravvive ai riavvii: senza persistenza ogni
-        restart lo riporterebbe a 1000 falsando l'equity e il cap di
-        esposizione."""
+        """Il capitale paper sopravvive ai riavvii. Fonte di verità: l'ultimo
+        capital_after del log SQLite (E5), che è durevole e coerente col
+        breaker; Redis è solo cache. Se divergono, vince SQLite e lo si
+        segnala — la divergenza è la firma di un crash tra insert e update
+        Redis."""
+        da_db = None
+        try:
+            trades = store.read_trades(limit=1)
+            if len(trades):
+                valore = trades.iloc[0].get("capital_after")
+                if valore is not None and valore == valore:      # non-NaN senza pandas
+                    da_db = float(valore)
+        except Exception as e:
+            logger.warning(f"⚠️ capital_after da SQLite non leggibile: {e}")
+
         value = await self.redis.get('capital')
+        da_redis = None
         if value:
             try:
-                self.capital = float(value)
-                logger.info(f"💰 Capitale caricato da Redis: {self.capital:.2f} USDT")
+                da_redis = float(value)
             except ValueError:
-                logger.warning(f"⚠️ Valore capitale non valido su Redis, resto a {self.capital:.2f}: {value!r}")
+                logger.warning(f"⚠️ Valore capitale non valido su Redis: {value!r}")
+
+        if da_db is not None:
+            self.capital = da_db
+            if da_redis is not None and abs(da_redis - da_db) > 0.01:
+                logger.warning(f"⚠️ Capitale Redis {da_redis:.2f} ≠ SQLite {da_db:.2f}: "
+                               "uso SQLite (crash tra insert e update?), riallineo Redis")
+                await self.redis.set('capital', str(self.capital))
+            else:
+                logger.info(f"💰 Capitale da SQLite: {self.capital:.2f} USDT")
+        elif da_redis is not None:
+            self.capital = da_redis
+            logger.info(f"💰 Capitale da Redis (nessun trade a DB): {self.capital:.2f} USDT")
 
     async def _seed_circuit_breaker(self):
         """Ricostruisce lo stato del circuit breaker dallo storico dei trade
@@ -229,7 +265,16 @@ class TradingEngine:
         except Exception as e:
             logger.warning(f"⚠️ Impossibile leggere lo storico trade per il circuit breaker: {e}")
             trades_df = None
-        self.circuit_breaker.seed_from_history(trades_df, self.capital)
+        reset_after = reset_capital = None
+        raw = await self.redis.get('circuit_breaker_reset')
+        if raw:
+            try:
+                r = json.loads(raw)
+                reset_after, reset_capital = r.get("ts"), r.get("capital")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        self.circuit_breaker.seed_from_history(trades_df, self.capital,
+                                               reset_after=reset_after, reset_capital=reset_capital)
         status = self.circuit_breaker.status()
         if status["tripped"]:
             logger.warning(f"⛔ Circuit breaker già attivo dopo il riavvio: {status['reason']}")
@@ -326,12 +371,23 @@ class TradingEngine:
                 stream_names += [f"{symbol}@kline_{kline_interval}" for symbol in self.symbols]
                 stream_url = f"{self.ws_url}?streams={'/'.join(stream_names)}"
 
+                self._richiedi_riconnessione_ws = False
                 async with websockets.connect(stream_url, ping_interval=30, ping_timeout=10) as self.ws:
                     logger.info("✅ WebSocket connesso")
 
                     while self.running:
+                        # E10: un cambio di timeframe/simboli richiede di
+                        # riconnettere con i nuovi stream — usciamo dall'inner
+                        # loop e l'outer riconnette con self.symbols aggiornati
+                        if self._richiedi_riconnessione_ws:
+                            logger.info("🔄 Riconnessione WS richiesta (cambio config)")
+                            break
                         try:
-                            msg = await self.ws.recv()
+                            try:
+                                msg = await asyncio.wait_for(self.ws.recv(), timeout=5.0)
+                            except asyncio.TimeoutError:
+                                continue          # nessun tick: torna a controllare i flag
+                                # (connessione viva, il ping_interval la tiene su)
                             data = json.loads(msg)
                             if 'data' in data:
                                 stream = data.get('stream', '')
@@ -556,8 +612,21 @@ class TradingEngine:
         fees = (position.entry_price + price) * position.quantity * self.taker_fee_pct
         pnl = pnl_gross - fees
 
+        # revisione 2026-07-21 (E5): la scrittura durevole (SQLite) viene PRIMA
+        # delle mutazioni di stato e della cache Redis. Redis e SQLite non
+        # possono essere atomici tra loro; scegliamo SQLite come fonte di
+        # verità e al riavvio riconciliamo il capitale dal log dei trade
+        # (_load_capital: last capital_after) — così storia, capitale e seed
+        # del breaker non divergono mai. Residuo noto e documentato
+        # (docs/REVISIONE_2026-07-21.md): un crash nella finestra micrometrica
+        # tra insert e update Redis può lasciare la posizione "aperta" in
+        # cache; in paper trading si richiude al più con un trade duplicato.
+        nuovo_capitale = self.capital + pnl
+        self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason,
+                                 pnl_gross=pnl_gross, fees=fees, capital_after=nuovo_capitale)
+
         position.is_open = False
-        self.capital += pnl
+        self.capital = nuovo_capitale
         self.last_close_time[symbol] = datetime.now(timezone.utc)
         self.circuit_breaker.record_trade(pnl, self.capital)
         await self._save_positions_to_redis()
@@ -569,20 +638,21 @@ class TradingEngine:
         )
         asyncio.create_task(asyncio.to_thread(          # E8: fuori dal loop caldo
             notifier.notify_position_closed, symbol, position.side, position.entry_price, price, pnl, reason))
-        self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason,
-                                 pnl_gross=pnl_gross, fees=fees)
 
     def _save_trade_to_file(self, symbol: str, side: str, entry: float, exit_price: float, pnl: float, reason: str,
-                            pnl_gross: float = None, fees: float = 0.0):
+                            pnl_gross: float = None, fees: float = 0.0, capital_after: float = None):
         import os
         timestamp = datetime.now(timezone.utc).isoformat()
+        # capital_after esplicito (E5): la scrittura durevole precede
+        # l'aggiornamento di self.capital, quindi non possiamo leggerlo da lì
+        capital_after = capital_after if capital_after is not None else self.capital
 
         # SQLite: fonte di verità interrogabile (dashboard, analisi)
         try:
             store.insert_trade(
                 symbol=symbol, side=side, entry=entry, exit_price=exit_price,
                 pnl=pnl, reason=reason, pnl_gross=pnl_gross, fees=fees,
-                capital_after=self.capital, timestamp=timestamp,
+                capital_after=capital_after, timestamp=timestamp,
             )
         except Exception as e:
             logger.error(f"❌ Persistenza trade su SQLite fallita: {e}")
@@ -598,7 +668,7 @@ class TradingEngine:
                 if is_new:
                     f.write("timestamp,symbol,side,entry,exit,pnl,reason,pnl_gross,fees,capital_after\n")
                 f.write(f"{timestamp},{symbol},{side},{entry},{exit_price},{pnl},{reason},"
-                        f"{pnl_gross if pnl_gross is not None else pnl},{fees},{self.capital}\n")
+                        f"{pnl_gross if pnl_gross is not None else pnl},{fees},{capital_after}\n")
         except Exception as e:
             logger.error(f"❌ Scrittura CSV trade fallita: {e}")
 
@@ -626,6 +696,12 @@ class TradingEngine:
                 if prezzo_uscita is None:
                     prezzo_uscita = await self._get_price_rest(symbol)
                 if prezzo_uscita and prezzo_uscita > 0:
+                    # revisione 2026-07-21 (E6): trailing statico REALE. Il
+                    # campo trailing_stop era scritto e mai letto — chi
+                    # disattivava dynamic_exit confidando nel trailing 1.5%
+                    # non aveva alcun trailing. Qui il stop_loss avanza (mai
+                    # indietro) col prezzo quando il dinamico è spento.
+                    self._ratchet_trailing_statico(symbol, prezzo_uscita)
                     await self._check_exit_conditions(symbol, prezzo_uscita)
                     if symbol not in self.positions or not self.positions[symbol].is_open:
                         continue          # chiusa dal backstop, non valutare MAX_HOLDING
@@ -657,10 +733,17 @@ class TradingEngine:
         NUOVO (il vecchio schema ricreava il task riusando lo stesso pubsub,
         che dopo un errore di connessione può essere irrecuperabile → il
         listener moriva in silenzio e l'engine smetteva di ricevere segnali)."""
+        pubsub = None
         while self.running:
             try:
                 pubsub = await self.redis.subscribe_fresh(*self.LISTENER_CHANNELS)
                 logger.info(f"👂 Listener Redis attivo su: {', '.join(self.LISTENER_CHANNELS)}")
+                # revisione 2026-07-21 (E7): il pubsub è fire-and-forget — i
+                # messaggi pubblicati nella finestra errore→re-subscribe sono
+                # persi. Dopo ogni (ri)sottoscrizione riconciliamo lo stato
+                # che DEVE restare coerente: config (un config_updated perso
+                # lascerebbe l'engine su parametri vecchi, come la deriva soglia).
+                await self._resync_dopo_subscribe()
                 async for message in pubsub.listen():
                     if message['type'] != 'message':
                         continue
@@ -677,6 +760,42 @@ class TradingEngine:
                 logger.error(f"❌ Errore Redis listener: {e}")
                 if self.running:
                     await asyncio.sleep(self._listener_backoff_seconds)
+            finally:
+                # E11: chiudi il vecchio pubsub prima di ricrearne uno, o un
+                # flapping prolungato di Redis lascia connessioni/FD pendenti
+                if pubsub is not None:
+                    try:
+                        await pubsub.aclose()
+                    except Exception:
+                        pass
+                    pubsub = None
+
+    def _ratchet_trailing_statico(self, symbol: str, price: float):
+        """Trailing statico (E6): avanza lo stop_loss nella direzione del
+        profitto, mai indietro. Attivo solo col dinamico spento e pct>0 —
+        col dinamico acceso ci pensa exit_model.update_trailing_stop."""
+        if self.dynamic_exit_enabled or self.trailing_stop_pct <= 0:
+            return
+        pos = self.positions.get(symbol)
+        if pos is None or not pos.is_open:
+            return
+        if pos.side == 'long':
+            nuovo = price * (1 - self.trailing_stop_pct)
+            if nuovo > pos.stop_loss:
+                pos.stop_loss = pos.trailing_stop = nuovo
+        else:
+            nuovo = price * (1 + self.trailing_stop_pct)
+            if nuovo < pos.stop_loss:
+                pos.stop_loss = pos.trailing_stop = nuovo
+
+    async def _resync_dopo_subscribe(self):
+        """Riallinea lo stato che un messaggio perso avrebbe aggiornato.
+        La config è la cosa critica; i comandi transitori (close_all) non
+        sono replicabili — restano un limite noto del pubsub fire-and-forget."""
+        try:
+            await self._load_config_from_redis()
+        except Exception as e:
+            logger.warning(f"⚠️ Resync config dopo subscribe fallito: {e}")
 
     async def _handle_channel_message(self, channel: str, data: str):
         if channel == 'ml_signals':
@@ -713,6 +832,12 @@ class TradingEngine:
                 elif command.get('action') == 'reset_circuit_breaker':
                     logger.warning("🔄 Comando ricevuto: reset manuale del circuit breaker")
                     self.circuit_breaker.manual_reset()
+                    # persiste il reset (E2): senza, il prossimo riavvio
+                    # ripesca il vecchio picco e ri-arma il trip appena azzerato
+                    await self.redis.set('circuit_breaker_reset', json.dumps({
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "capital": self.capital,
+                    }))
             except Exception as e:
                 logger.error(f"❌ Errore comando engine: {e}")
 

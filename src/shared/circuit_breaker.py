@@ -162,19 +162,36 @@ class CircuitBreaker:
         self._peak_capital = None
 
     def seed_from_history(self, trades_df: Optional[pd.DataFrame], current_capital: float,
-                          now: Optional[datetime] = None):
+                          now: Optional[datetime] = None,
+                          reset_after: Optional[str] = None,
+                          reset_capital: Optional[float] = None):
         """Ricostruisce lo stato dallo storico dei trade dopo un riavvio.
         Senza questo, un crash durante una serie di perdite (con systemd
-        Restart=always) azzererebbe il contatore a ogni riavvio,
-        vanificando la protezione proprio quando serve di più."""
+        Restart=always) azzererebbe il contatore a ogni riavvio.
+
+        reset_after/reset_capital (revisione 2026-07-21, E2): se c'è stato un
+        reset manuale, i trade PRECEDENTI vanno ignorati e il picco riparte
+        dal capitale al reset — altrimenti ogni riavvio ripescherebbe il
+        vecchio picco dallo storico e ri-armerebbe il trip che l'umano aveva
+        appena azzerato (deadlock: reset necessario a ogni boot)."""
         now = now or datetime.now(timezone.utc)
+        if trades_df is not None and not trades_df.empty and reset_after:
+            trades_df = trades_df[trades_df["timestamp"].astype(str) >= reset_after]
         if trades_df is None or trades_df.empty:
-            self._peak_capital = current_capital
+            self._peak_capital = reset_capital if reset_capital is not None else current_capital
             return
 
         trades_df = trades_df.sort_values("timestamp")
+        # il picco è il massimo capital_after DA (eventuale) reset in poi:
+        # con reset_capital come base, i trade filtrati sono già solo i
+        # successivi, quindi il max riflette solo la storia post-reset
+        candidati = []
+        if reset_capital is not None:
+            candidati.append(reset_capital)
         if "capital_after" in trades_df and trades_df["capital_after"].notna().any():
-            self._peak_capital = float(trades_df["capital_after"].max())
+            candidati.append(float(trades_df["capital_after"].max()))
+        if candidati:
+            self._peak_capital = max(candidati)
 
         consecutive = 0
         for pnl in trades_df["pnl"].iloc[::-1]:
