@@ -6,6 +6,7 @@ all-positive). Nessuna chiave di trading: il denaro non esiste per costruzione.
 
 Heartbeat su Redis (`heartbeat_carry`); stato in data/carry_paper/.
 """
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -16,7 +17,9 @@ from loguru import logger
 from src.carry.paper import (accredita_funding, apri_posizione, carica_stato,
                              chiudi_posizione, salva_stato, selezione_w30,
                              serve_ribilanciamento)
-from src.research.carry_monitor import FUNDING_DIR
+from src.research.carry_monitor import (FUNDING_DIR, basis_corrente,
+                                        fascia_regime, funding_corrente,
+                                        percentile_storico)
 
 FAPI = "https://fapi.binance.com"
 SPOT_API = "https://api.binance.com"
@@ -89,6 +92,24 @@ def ciclo(stato: dict) -> list[dict]:
     return eventi
 
 
+def pubblica_semaforo(r):
+    """Calcola il semaforo (funding mediano, percentile, basis) e lo pubblica
+    su Redis, così la dashboard lo LEGGE invece di fare decine di chiamate REST
+    a Binance al primo render (era il tab Carry lento a freddo). Qui è un lavoro
+    di background orario: nessuna UI da bloccare."""
+    try:
+        fc = funding_corrente()
+        if not fc:
+            return
+        fascia, nota = fascia_regime(fc["mediana"])
+        payload = {**fc, "percentile": percentile_storico(fc["mediana"]),
+                   "fascia": fascia, "nota": nota, "basis": basis_corrente(),
+                   "ts": datetime.now(timezone.utc).isoformat()}
+        r.set("carry_semaforo", json.dumps(payload))
+    except Exception as e:
+        logger.warning(f"pubblicazione semaforo fallita (non bloccante): {e}")
+
+
 def main():
     logger.info("Paper executor del carry: primaria carry_v1 (W30 all-positive), "
                 "notional di carta, nessuna chiave di trading")
@@ -98,6 +119,7 @@ def main():
             stato = carica_stato()
             eventi = ciclo(stato)
             salva_stato(stato, eventi)
+            pubblica_semaforo(r)
             try:
                 r.set("heartbeat_carry", datetime.now(timezone.utc).isoformat())
             except Exception:

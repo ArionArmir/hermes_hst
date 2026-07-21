@@ -45,3 +45,43 @@ def test_scadenza_da_simbolo():
     s = scadenza_da_simbolo("BTCUSDT_260925")
     assert (s.year, s.month, s.day, s.hour) == (2026, 9, 25, 8)
     assert s.tzinfo is not None and s.utcoffset().total_seconds() == 0
+
+
+def test_pubblica_semaforo_schema_per_dashboard(monkeypatch):
+    """Il servizio pubblica su Redis tutto ciò che la dashboard mostra senza
+    ricalcolare: mediana, fascia, percentile, positivi/totale, basis, ts.
+    Un campo mancante manderebbe in errore il render del tab Carry."""
+    import json
+    import src.carry.main as cm
+
+    monkeypatch.setattr(cm, "funding_corrente",
+                        lambda: {"mediana": 0.04, "positivi": 30, "totale": 40})
+    monkeypatch.setattr(cm, "percentile_storico", lambda m: 0.33)
+    monkeypatch.setattr(cm, "basis_corrente",
+                        lambda: {"BTC": {"basis_annuo": 0.039, "giorni": 66}})
+
+    class _R:
+        def __init__(self): self.store = {}
+        def set(self, k, v): self.store[k] = v
+
+    r = _R()
+    cm.pubblica_semaforo(r)
+    sem = json.loads(r.store["carry_semaforo"])
+    for campo in ("mediana", "fascia", "nota", "percentile", "positivi", "totale", "basis", "ts"):
+        assert campo in sem, f"manca {campo}"
+    assert sem["basis"]["BTC"]["giorni"] == 66
+
+
+def test_pubblica_semaforo_funding_assente_non_scrive(monkeypatch):
+    """API giù → funding_corrente None → non pubblica nulla (la dashboard
+    mostra 'in attesa', non un semaforo vuoto)."""
+    import src.carry.main as cm
+    monkeypatch.setattr(cm, "funding_corrente", lambda: None)
+
+    class _R:
+        def __init__(self): self.store = {}
+        def set(self, k, v): self.store[k] = v
+
+    r = _R()
+    cm.pubblica_semaforo(r)
+    assert "carry_semaforo" not in r.store

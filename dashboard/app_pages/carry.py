@@ -11,42 +11,42 @@ import pandas as pd
 import streamlit as st
 
 from src.invest.tripwire import CONSECUTIVI_RICHIESTI, carica, consecutivi_correnti
-from src.research.carry_monitor import (STORICO_CARRY, basis_corrente,
-                                        fascia_regime, funding_corrente,
-                                        percentile_storico)
+from src.research.carry_monitor import STORICO_CARRY
+from utils.redis_client import get_json
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "data" / "carry_paper" / "state.json"
 LEDGER = ROOT / "data" / "carry_paper" / "ledger.jsonl"
 
 
-@st.cache_data(ttl="30m", show_spinner="Leggo il regime dal mercato…")
+@st.cache_data(ttl="60s")
 def _semaforo():
-    fc = funding_corrente()
-    pct = percentile_storico(fc["mediana"]) if fc else None
-    return fc, pct, basis_corrente()
+    """Legge il semaforo da Redis (pubblicato dal servizio carry ogni ora):
+    lettura istantanea, niente più decine di chiamate REST a Binance al primo
+    render — quello rendeva il tab Carry lento a freddo."""
+    return get_json("carry_semaforo")
 
 
 # ---- semaforo -------------------------------------------------------------
 st.subheader("Semaforo del regime")
-fc, pct, bc = _semaforo()
-if fc:
-    fascia, nota = fascia_regime(fc["mediana"])
+sem = _semaforo()
+if sem:
+    pct = sem.get("percentile")
     with st.container(horizontal=True):
-        st.metric("Funding mediano 30gg (annuo)", f"{fc['mediana']:+.1%}", border=True)
-        st.metric("Fascia", fascia, border=True)
+        st.metric("Funding mediano 30gg (annuo)", f"{sem['mediana']:+.1%}", border=True)
+        st.metric("Fascia", sem["fascia"], border=True)
         st.metric("Percentile storico", f"{pct:.0%}" if pct is not None else "—",
                   border=True)
-        st.metric("Simboli a funding positivo", f"{fc['positivi']}/{fc['totale']}",
+        st.metric("Simboli a funding positivo", f"{sem['positivi']}/{sem['totale']}",
                   border=True)
-    st.caption(nota)
+    st.caption(sem["nota"] + f" · aggiornato {sem['ts'][:16].replace('T', ' ')} UTC")
+    if sem.get("basis"):
+        with st.container(horizontal=True):
+            for sott, b in sem["basis"].items():
+                st.metric(f"Basis {sott} trimestrale ({b['giorni']:.0f}gg)",
+                          f"{b['basis_annuo']:+.1%}", border=True)
 else:
-    st.warning("Funding live non disponibile (API irraggiungibile)")
-if bc:
-    with st.container(horizontal=True):
-        for sott, b in bc.items():
-            st.metric(f"Basis {sott} trimestrale ({b['giorni']:.0f}gg)",
-                      f"{b['basis_annuo']:+.1%}", border=True)
+    st.info("Semaforo in attesa del primo ciclo del servizio carry (hermes-carry).")
 
 # ---- tripwire -------------------------------------------------------------
 st.subheader("Tripwire di riattivazione")
