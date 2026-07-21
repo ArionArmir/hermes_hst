@@ -75,6 +75,25 @@ pianificare (tocca il servizio vivo o richiede infrastruttura nuova).
   allarme entro ~10 minuti. È la mitigazione esterna che rende i difetti di
   resilienza rimasti (📋) osservabili anche prima di correggerli.
 
+## Seconda passata — regressioni dei fix (2026-07-21, pomeriggio)
+
+Tre revisori mirati SOLO al diff dei fix, a caccia di regressioni introdotte
+la mattina. I due dubbi più gravi (doppia chiusura, `is_tripped` che muta
+stato) sono stati **verificati sicuri** (nessun `await` tra guardia e
+`is_open=False` col prezzo esplicito; asyncio single-thread rende
+`is_tripped`/`record_trade` atomici). Trovate 3 regressioni reali, tutte
+corrette con test:
+
+| Regressione | Gravità | Correzione |
+|---|---|---|
+| `connect()` con retry infinito appendeva avvio servizi e test suite se Redis giù | alto | retry BOUNDED (~2 min) poi solleva → systemd riavvia (fail loud + auto-recover) |
+| `_carica_stato` catturava `OSError` (lettura transitoria) e buttava stato valido | medio | solo `JSONDecodeError` va in quarantena; `OSError` rilancia (file intatto, systemd riavvia); rename protetto; microsecondi nel nome |
+| Insert SQLite fallito lasciava Redis avanti → capitale regrediva al riavvio | medio | la chiusura si ABORTISCE se la scrittura durevole fallisce (posizione resta aperta, si richiude dopo): stato sempre coerente col log |
+
+Più due minori corretti: `_trip_reason` azzerato al rientro del trip
+giornaliero; il trailing statico ratchettato ora persiste su Redis (non si
+perde a un riavvio). Suite: 372 verdi.
+
 ## Stato finale
 
 **Tutti i 28 finding chiusi**: corretti con test, o (per i due residui E5/E7

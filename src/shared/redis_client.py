@@ -19,14 +19,17 @@ class RedisClient:
         self.redis: Optional[aioredis.Redis] = None
         self._pubsub: Optional[aioredis.client.PubSub] = None
 
-    async def connect(self, retry_forever: bool = True):
-        """Riprova finché Redis non risponde (revisione 2026-07-21, S6):
-        il vecchio 'ritorna None e avanti' produceva servizi zombie — vivi
-        per systemd, ma con ogni set/publish che falliva per sempre.
-        retry_forever=False mantiene il vecchio contratto per i chiamanti
-        che gestiscono da soli il fallimento."""
+    async def connect(self, tentativi: int = 8):
+        """Riprova la connessione con backoff, poi SOLLEVA (revisione
+        2026-07-21, S6 + regressione della prima passata): il vecchio
+        'ritorna None e avanti' produceva servizi zombie; un retry INFINITO
+        (bug introdotto dal primo fix) bloccava avvio e test suite per sempre
+        se Redis non tornava. Retry BOUNDED (~1+2+4+8+16+30+30+30 ≈ 2 min)
+        copre il caso comune 'Redis parte pochi secondi dopo il servizio al
+        boot'; se resta giù oltre, si solleva e systemd (Restart=always)
+        riavvia — fail loud + auto-recover, mai zombie né hang."""
         attesa = 1
-        while True:
+        for tentativo in range(1, tentativi + 1):
             try:
                 self.redis = await aioredis.from_url(
                     f"redis://{self.host}:{self.port}/{self.db}",
@@ -36,12 +39,14 @@ class RedisClient:
                 logger.info("✅ Redis connesso")
                 return self.redis
             except Exception as e:
-                logger.error(f"❌ Errore connessione Redis: {e}"
-                             + (f" — riprovo tra {attesa}s" if retry_forever else ""))
-                if not retry_forever:
-                    return None
-                await asyncio.sleep(attesa)
-                attesa = min(attesa * 2, 30)
+                ultimo = e
+                if tentativo < tentativi:
+                    logger.error(f"❌ Errore connessione Redis ({tentativo}/{tentativi}): "
+                                 f"{e} — riprovo tra {attesa}s")
+                    await asyncio.sleep(attesa)
+                    attesa = min(attesa * 2, 30)
+        logger.error(f"❌ Redis irraggiungibile dopo {tentativi} tentativi: sollevo")
+        raise ultimo
 
     async def set(self, key: str, value: Any):
         if isinstance(value, (dict, list)):

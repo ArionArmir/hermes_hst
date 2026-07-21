@@ -129,6 +129,8 @@ class CircuitBreaker:
         # più chiusure → mai più record_trade).
         if self._daily_trip and now.strftime("%Y-%m-%d") != self._current_day:
             self._daily_trip = False
+            if not self._drawdown_trip and self._tripped_until is None:
+                self._trip_reason = None      # niente più "perdita giornaliera" con tripped=False
         if self._drawdown_trip or self._daily_trip:
             return True
         if self._tripped_until is not None:

@@ -149,3 +149,78 @@ def test_trailing_statico_spento_col_dinamico():
     eng.positions = {"BTCUSDT": pos}
     eng._ratchet_trailing_statico("BTCUSDT", 105.0)
     assert pos.stop_loss == 98.0                         # invariato
+
+
+def test_connect_bounded_poi_solleva_non_appende(monkeypatch):
+    """Regressione passata 2: retry_forever infinito appendeva avvio e test.
+    Ora il retry è bounded e solleva (systemd riavvia) invece di bloccare."""
+    import asyncio
+    from src.shared.redis_client import RedisClient
+
+    async def scenario():
+        c = RedisClient()
+        chiamate = {"n": 0}
+
+        async def from_url_rotto(*a, **k):
+            chiamate["n"] += 1
+            raise ConnectionError("Redis giù")
+
+        async def no_sleep(*a, **k):
+            return
+        monkeypatch.setattr("src.shared.redis_client.aioredis.from_url", from_url_rotto)
+        monkeypatch.setattr("src.shared.redis_client.asyncio.sleep", no_sleep)
+        import pytest
+        with pytest.raises(ConnectionError):
+            await c.connect(tentativi=4)
+        assert chiamate["n"] == 4                              # bounded, non infinito
+
+    asyncio.run(scenario())
+
+
+def test_carica_stato_oserror_transitorio_rilancia_non_butta(tmp_path, monkeypatch):
+    """Regressione passata: OSError di lettura buttava uno stato valido.
+    Ora rilancia (systemd riavvia, file intatto); solo la corruzione va in quarantena."""
+    import src.sentiment.v2 as v2mod
+    monkeypatch.setattr(v2mod, "DIR_STATO", tmp_path)
+    (tmp_path / "stato.json").write_text('{"scores": {}, "viste": {}}')
+    s = v2mod.SentimentV2.__new__(v2mod.SentimentV2)
+
+    import pathlib
+    orig = pathlib.Path.read_text
+    def read_rotto(self, *a, **k):
+        if self.name == "stato.json":
+            raise OSError("EMFILE: troppi file aperti")
+        return orig(self, *a, **k)
+    monkeypatch.setattr(pathlib.Path, "read_text", read_rotto)
+
+    import pytest
+    with pytest.raises(OSError):
+        v2mod.SentimentV2._carica_stato(s)                    # rilancia, non butta
+    assert (tmp_path / "stato.json").exists()                 # file valido INTATTO
+    assert not list(tmp_path.glob("stato.corrotto.*"))        # niente quarantena
+
+
+def test_chiusura_abortita_se_scrittura_durevole_fallisce():
+    """Regressione: insert SQLite fallito + Redis avanti → capitale regrediva
+    al riavvio. Ora la chiusura si aborta e la posizione resta aperta."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from src.engine.main import TradingEngine
+
+    eng = TradingEngine.__new__(TradingEngine)
+    eng.capital = 1000.0
+    eng.taker_fee_pct = 0.0
+    pos = SimpleNamespace(side="long", is_open=True, entry_price=100.0, quantity=1.0)
+    eng.positions = {"BTCUSDT": pos}
+    eng.latest_prices = {"BTCUSDT": 90.0}
+    eng.circuit_breaker = SimpleNamespace(record_trade=lambda *a, **k: None)
+    eng.redis = SimpleNamespace(set=AsyncMock())
+    eng._save_positions_to_redis = AsyncMock()
+    eng.last_close_time = {}
+    eng._save_trade_to_file = lambda *a, **k: False           # scrittura durevole fallita
+
+    asyncio.run(eng._close_position("BTCUSDT", reason="STOP_LOSS", price=90.0))
+    assert pos.is_open is True                                # chiusura abortita
+    assert eng.capital == 1000.0                              # capitale NON mutato
+    eng.redis.set.assert_not_called()                         # Redis NON toccato

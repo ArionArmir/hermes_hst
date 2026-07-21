@@ -622,8 +622,18 @@ class TradingEngine:
         # tra insert e update Redis può lasciare la posizione "aperta" in
         # cache; in paper trading si richiude al più con un trade duplicato.
         nuovo_capitale = self.capital + pnl
-        self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl, reason,
-                                 pnl_gross=pnl_gross, fees=fees, capital_after=nuovo_capitale)
+        # se la scrittura durevole fallisce (disco pieno, lock SQLite), la
+        # chiusura si ABORTISCE prima di mutare stato/Redis (regressione della
+        # prima passata: proseguire lasciava Redis avanti e il DB indietro, e
+        # al riavvio la riconciliazione da DB faceva REGREDIRE il capitale).
+        # La posizione resta aperta e si richiude al prossimo giro: stato
+        # sempre coerente col log dei trade.
+        if not self._save_trade_to_file(symbol, position.side, position.entry_price, price, pnl,
+                                        reason, pnl_gross=pnl_gross, fees=fees,
+                                        capital_after=nuovo_capitale):
+            logger.critical(f"⛔ Chiusura {symbol} abortita: scrittura durevole fallita, "
+                            "posizione lasciata aperta per il prossimo tentativo")
+            return
 
         position.is_open = False
         self.capital = nuovo_capitale
@@ -640,7 +650,9 @@ class TradingEngine:
             notifier.notify_position_closed, symbol, position.side, position.entry_price, price, pnl, reason))
 
     def _save_trade_to_file(self, symbol: str, side: str, entry: float, exit_price: float, pnl: float, reason: str,
-                            pnl_gross: float = None, fees: float = 0.0, capital_after: float = None):
+                            pnl_gross: float = None, fees: float = 0.0, capital_after: float = None) -> bool:
+        """Ritorna True se la scrittura DUREVOLE (SQLite) è riuscita. Il
+        chiamante aborta la chiusura se torna False (coerenza capitale/log)."""
         import os
         timestamp = datetime.now(timezone.utc).isoformat()
         # capital_after esplicito (E5): la scrittura durevole precede
@@ -656,6 +668,7 @@ class TradingEngine:
             )
         except Exception as e:
             logger.error(f"❌ Persistenza trade su SQLite fallita: {e}")
+            return False
 
         # Export CSV in append puro (il vecchio leggi-tutto+riscrivi era
         # O(n²) e corruttibile se il processo moriva a metà scrittura),
@@ -671,6 +684,7 @@ class TradingEngine:
                         f"{pnl_gross if pnl_gross is not None else pnl},{fees},{capital_after}\n")
         except Exception as e:
             logger.error(f"❌ Scrittura CSV trade fallita: {e}")
+        return True                       # la durabilità è lo SQLite; il CSV è best-effort
 
     async def _position_monitor(self):
         while self.running:
@@ -701,7 +715,8 @@ class TradingEngine:
                     # disattivava dynamic_exit confidando nel trailing 1.5%
                     # non aveva alcun trailing. Qui il stop_loss avanza (mai
                     # indietro) col prezzo quando il dinamico è spento.
-                    self._ratchet_trailing_statico(symbol, prezzo_uscita)
+                    if self._ratchet_trailing_statico(symbol, prezzo_uscita):
+                        await self._save_positions_to_redis()   # persiste lo stop ratchettato
                     await self._check_exit_conditions(symbol, prezzo_uscita)
                     if symbol not in self.positions or not self.positions[symbol].is_open:
                         continue          # chiusa dal backstop, non valutare MAX_HOLDING
@@ -770,23 +785,28 @@ class TradingEngine:
                         pass
                     pubsub = None
 
-    def _ratchet_trailing_statico(self, symbol: str, price: float):
+    def _ratchet_trailing_statico(self, symbol: str, price: float) -> bool:
         """Trailing statico (E6): avanza lo stop_loss nella direzione del
         profitto, mai indietro. Attivo solo col dinamico spento e pct>0 —
-        col dinamico acceso ci pensa exit_model.update_trailing_stop."""
+        col dinamico acceso ci pensa exit_model.update_trailing_stop.
+        Ritorna True se lo stop è cambiato (il chiamante lo persiste su Redis,
+        così un riavvio non perde la protezione guadagnata)."""
         if self.dynamic_exit_enabled or self.trailing_stop_pct <= 0:
-            return
+            return False
         pos = self.positions.get(symbol)
         if pos is None or not pos.is_open:
-            return
+            return False
         if pos.side == 'long':
             nuovo = price * (1 - self.trailing_stop_pct)
             if nuovo > pos.stop_loss:
                 pos.stop_loss = pos.trailing_stop = nuovo
+                return True
         else:
             nuovo = price * (1 + self.trailing_stop_pct)
             if nuovo < pos.stop_loss:
                 pos.stop_loss = pos.trailing_stop = nuovo
+                return True
+        return False
 
     async def _resync_dopo_subscribe(self):
         """Riallinea lo stato che un messaggio perso avrebbe aggiornato.

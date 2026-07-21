@@ -121,15 +121,30 @@ class SentimentV2:
         servizio in crash-loop (revisione 2026-07-21, S1): il file rotto
         viene messo da parte per autopsia e si riparte puliti."""
         f = DIR_STATO / "stato.json"
-        if f.exists():
+        if not f.exists():
+            return {"scores": {}, "viste": {}}
+        try:
+            testo = f.read_text()
+        except OSError:
+            # errore di LETTURA transitorio (EIO, troppi file aperti): NON è
+            # corruzione — rilancia, systemd riavvia e il file resta intatto
+            # per un retry riuscito. Regressione della prima passata: catturarlo
+            # qui buttava uno stato valido (memoria novità di giorni).
+            raise
+        try:
+            return json.loads(testo)
+        except (json.JSONDecodeError, ValueError) as e:
+            # SOLO corruzione del contenuto (crash a metà scrittura): quarantena
+            # + ripartenza pulita. Microsecondi nel nome per non sovrascrivere
+            # un'autopsia precedente nello stesso secondo.
+            rotto = f.with_suffix(f".corrotto.{datetime.now(timezone.utc):%Y%m%dT%H%M%S%f}")
             try:
-                return json.loads(f.read_text())
-            except (json.JSONDecodeError, OSError) as e:
-                rotto = f.with_suffix(f".corrotto.{datetime.now(timezone.utc):%Y%m%dT%H%M%S}")
                 f.rename(rotto)
-                logger.error(f"stato.json illeggibile ({e}): archiviato in {rotto.name}, "
-                             "riparto con stato vuoto")
-        return {"scores": {}, "viste": {}}
+            except OSError:
+                logger.error(f"stato.json corrotto ({e}) e rename fallito: riparto vuoto")
+                return {"scores": {}, "viste": {}}
+            logger.error(f"stato.json corrotto ({e}): archiviato in {rotto.name}, riparto vuoto")
+            return {"scores": {}, "viste": {}}
 
     def _salva_stato(self):
         # scrittura atomica: tmp + os.replace — mai troncare il file vivo (S1)
