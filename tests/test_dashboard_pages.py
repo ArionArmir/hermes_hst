@@ -69,3 +69,17 @@ def test_pagine_carry_e_forward_renderizzano():
                                default_timeout=60)
         at.run()
         assert not at.exception, f"{pagina}: {at.exception}"
+
+
+def test_pagine_reggono_con_redis_vuoto(monkeypatch):
+    """Fallback quando i servizi non hanno ancora pubblicato su Redis (sistema
+    appena avviato): carry senza semaforo, analisi senza model_meta, forward
+    senza telemetria devono renderizzare gli stati d'attesa, non crashare.
+    È il rischio introdotto dal pattern 'la dashboard legge da Redis'."""
+    import utils.redis_client as rc
+    monkeypatch.setattr(rc, "get_json", lambda *a, **k: None)
+    for pagina in ("carry.py", "analysis.py", "forward.py"):
+        at = AppTest.from_file(str(REPO / "dashboard" / "app_pages" / pagina),
+                               default_timeout=60)
+        at.run()
+        assert not at.exception, f"{pagina} con Redis vuoto: {at.exception}"
