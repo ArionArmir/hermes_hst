@@ -60,8 +60,8 @@ def test_sentiment_rows_per_asset(monkeypatch, tmp_path):
 def test_signal_outcomes_are_recorded(monkeypatch, tmp_path):
     engine = _make_engine(monkeypatch, tmp_path)
 
-    # 1. confidenza bassa: 0.7 × 0.7 = 0.49 < 0.55
-    _send(engine, confidence=0.7)
+    # 1. confidenza bassa: 0.5 < 0.55
+    _send(engine, confidence=0.5)
     # 2. veto sentiment
     engine.sentiment_by_asset["BTCUSDT"] = -0.9
     _send(engine, confidence=0.95)
@@ -74,7 +74,8 @@ def test_signal_outcomes_are_recorded(monkeypatch, tmp_path):
     signals = store.read_signals().sort_values("id")
     assert list(signals["outcome"]) == ["LOW_CONFIDENCE", "SENTIMENT_VETO", "OPENED", "ALREADY_OPEN"]
     opened = signals[signals["outcome"] == "OPENED"].iloc[0]
-    assert opened["weighted_confidence"] is not None and 0.6 < opened["weighted_confidence"] < 0.65
+    # bonus-only con sentiment neutro: pesata = confidenza del modello (0.9)
+    assert opened["weighted_confidence"] is not None and abs(opened["weighted_confidence"] - 0.9) < 1e-9
 
 
 def test_reverse_is_recorded_as_reversed(monkeypatch, tmp_path):
@@ -134,3 +135,38 @@ def test_wal_allows_concurrent_reader(monkeypatch, tmp_path):
     store.insert_trade(symbol="B", side="short", entry=2, exit_price=1, pnl=1, reason="Y")
     second = store.read_trades()
     assert len(first) == 1 and len(second) == 2
+
+
+def test_count_signals_conta_senza_leggere_tutto(monkeypatch, tmp_path):
+    """count_signals sostituisce read_signals(100k)+sum: stessi numeri,
+    ma una COUNT invece di leggere l'intera tabella."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
+    for esito in ["OPENED", "OPENED", "LOW_CONFIDENCE", "SENTIMENT_VETO"]:
+        store.insert_signal(symbol="BTCUSDT", action="buy", outcome=esito, confidence=0.9)
+
+    assert store.count_signals() == 4
+    assert store.count_signals("OPENED") == 2
+    assert store.count_signals("MAI_ESISTITO") == 0
+    # coerenza col metodo che sostituisce
+    df = store.read_signals(limit=100_000)
+    assert store.count_signals() == len(df)
+    assert store.count_signals("OPENED") == int((df["outcome"] == "OPENED").sum())
+
+
+def test_count_signals_db_vuoto(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "vuoto.db")
+    assert store.count_signals() == 0 and store.count_signals("OPENED") == 0
+
+
+def test_read_signals_since_avanza_contiguo(monkeypatch, tmp_path):
+    """Revisione branch 2026-07-21: l'osservatore deve avanzare per id
+    crescente dal cursore, non prendere le N più recenti (che salterebbero
+    un arretrato oltre il limite)."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
+    for i in range(5):
+        store.insert_signal(symbol="BTCUSDT", action="buy", outcome="OPENED", confidence=0.9)
+    primi = store.read_signals_since(0, limit=3)
+    assert list(primi["id"]) == [1, 2, 3]                  # i più VECCHI, in ordine
+    dopo = store.read_signals_since(3)
+    assert list(dopo["id"]) == [4, 5]                      # continua dal cursore
+    assert store.read_trades_since(0).empty                # tabella trades vuota

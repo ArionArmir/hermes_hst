@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import formatting
+from utils.redis_client import get_json
 from src.shared import store
 from src.shared.features import FEATURE_COLS
 
@@ -153,37 +154,55 @@ st.divider()
 
 @st.cache_resource(ttl="10m")
 def _load_champion(mtime: float):
-    """mtime nella chiave di cache: un retraining invalida automaticamente."""
+    """mtime nella chiave di cache: un retraining invalida automaticamente.
+    Usato solo come FALLBACK se l'inference non ha ancora pubblicato i meta."""
     import joblib
     return joblib.load(MODEL_PATH)
 
 
-st.subheader("Modello champion")
-if not os.path.exists(MODEL_PATH):
-    st.warning("Nessun modello champion trovato.")
-else:
-    mtime = os.path.getmtime(MODEL_PATH)
-    trained_at = datetime.fromtimestamp(mtime, tz=timezone.utc)
+def _meta_da_modello() -> dict | None:
+    """Fallback (inference giù / meta non ancora pubblicati): ricava i metadati
+    caricando il pickle. Il percorso veloce li legge da Redis."""
+    if not os.path.exists(MODEL_PATH):
+        return {"disponibile": False}
     try:
-        model = _load_champion(mtime)
+        model = _load_champion(os.path.getmtime(MODEL_PATH))
         trained_names = list(model.get_booster().feature_names or [])
-        compatible = trained_names == FEATURE_COLS
-        col_info, col_importance = st.columns((1, 2))
-        with col_info:
-            st.metric("Ultimo training", trained_at.strftime("%d/%m/%Y %H:%M UTC"), border=True)
-            st.metric("Feature / classi", f"{len(trained_names)} / {len(model.classes_)}", border=True)
-            if compatible:
-                st.success("Compatibile con le feature correnti", icon=":material/check_circle:")
-            else:
-                st.error("NON compatibile: rilanciare train_all_models.py", icon=":material/error:")
-        with col_importance:
+        return {"disponibile": True, "compatibile": trained_names == FEATURE_COLS,
+                "trained_at": datetime.fromtimestamp(os.path.getmtime(MODEL_PATH),
+                                                     tz=timezone.utc).isoformat(),
+                "n_classi": len(model.classes_), "feature": trained_names,
+                "importanze": [float(x) for x in model.feature_importances_]}
+    except Exception as e:
+        return {"disponibile": True, "errore": str(e)}
+
+
+st.subheader("Modello champion")
+# percorso veloce: metadati pubblicati dall'inference su Redis (lettura
+# istantanea); fallback al caricamento del pickle se assenti
+meta = get_json("model_meta") or _meta_da_modello()
+if not meta or not meta.get("disponibile"):
+    st.warning("Nessun modello champion trovato.")
+elif meta.get("errore"):
+    st.error(f"Impossibile leggere il modello: {meta['errore']}")
+else:
+    col_info, col_importance = st.columns((1, 2))
+    with col_info:
+        if meta.get("trained_at"):
+            ta = datetime.fromisoformat(meta["trained_at"])
+            st.metric("Ultimo training", ta.strftime("%d/%m/%Y %H:%M UTC"), border=True)
+        feature = meta.get("feature", [])
+        st.metric("Feature / classi", f"{len(feature)} / {meta.get('n_classi', '—')}", border=True)
+        if meta.get("compatibile"):
+            st.success("Compatibile con le feature correnti", icon=":material/check_circle:")
+        else:
+            st.error("NON compatibile: rilanciare train_all_models.py", icon=":material/error:")
+    with col_importance:
+        if meta.get("importanze"):
             with st.container(border=True):
                 st.markdown("**Importanza delle feature**")
                 importance = pd.DataFrame({
-                    "feature": trained_names,
-                    "importanza": model.feature_importances_,
+                    "feature": feature, "importanza": meta["importanze"],
                 }).sort_values("importanza")
                 st.bar_chart(importance, x="importanza", y="feature", horizontal=True,
                              x_label="", y_label="", height=320)
-    except Exception as e:
-        st.error(f"Impossibile leggere il modello: {e}")

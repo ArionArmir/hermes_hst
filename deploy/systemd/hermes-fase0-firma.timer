@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes - Fase 0 firma liquidazioni: riprova ogni giorno finche' non gira
+
+[Timer]
+# 12:00 locali: i dump giornalieri di Binance Vision arrivano in mattinata.
+# --auto esce zitto se la fase e' gia' registrata o il dump manca ancora;
+# a fase completata il timer si puo' disabilitare.
+OnCalendar=*-*-* 12:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

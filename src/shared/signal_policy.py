@@ -8,7 +8,11 @@ strategia diversa da quella tradata.
 # Soglia unica e SIMMETRICA per emettere un segnale: P(up) > soglia → buy,
 # P(down) > soglia → sell. Il vecchio criterio short "P(rialzo) < 0.4" era
 # soddisfatto anche dal mercato laterale (docs/IMPROVEMENT_PLAN.md, S2).
-SIGNAL_PROB_THRESHOLD = 0.6
+# Questo è solo il DEFAULT/fallback: il valore operativo è
+# config.ml_confidence_threshold (unico regolatore, tarabile da dashboard).
+# 0.55 tarato il 2026-07-16 con tune_strategy.py su due finestre
+# out-of-sample: sopra 0.60 i segnali quasi spariscono e il PnL crolla.
+SIGNAL_PROB_THRESHOLD = 0.55
 
 
 def signal_from_proba(p_down: float, p_up: float,

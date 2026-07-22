@@ -1,0 +1,109 @@
+sigillato_il: '2026-07-16'
+motivo: 'Nessun dato storico dei simboli già guardati è vergine: il walk-forward del
+  2026-07-16 ha testato 2023-01 -> 2026-07 con 41 configurazioni registrate, e 2020-2023
+  è servito ad addestrare. Il Deflated Sharpe del candidato migliore (+244.65, soglia
+  0.50) con il conteggio onesto dei tentativi è 21.4%: sotto il livello che la fortuna
+  produce da sola. Questi simboli non sono mai stati scaricati, quindi mai analizzati.'
+regola: 'APRIRE UNA VOLTA SOLA, su un candidato unico già congelato, tramite src.shared.holdout.open_seal(),
+  dichiarando i tentativi consumati. Ogni ricerca condotta qui trasforma l''holdout
+  in un set di ricerca e ne annulla il valore: riscegliendo il meglio di 6 su un holdout,
+  un edge vero di 0 si rilegge +156 (simulazione 100k, 2026-07-16).'
+criterio_pulizia: Mai presenti in data/historical/, che è il registro di tutto ciò
+  che è stato scaricato. Un simbolo mai scaricato non può essere stato analizzato.
+  Verificato automaticamente da questo script.
+simboli_gia_bruciati:
+- ADAUSDT
+- APTUSDT
+- ARBUSDT
+- ATOMUSDT
+- AVAXUSDT
+- BNBUSDT
+- BTCUSDT
+- DOGEUSDT
+- DOTUSDT
+- ETHUSDT
+- FILUSDT
+- INJUSDT
+- LINKUSDT
+- LTCUSDT
+- NEARUSDT
+- OPUSDT
+- POLUSDT
+- SOLUSDT
+- SUIUSDT
+- TRXUSDT
+- UNIUSDT
+- XRPUSDT
+criterio_lotti: 'Ordinamento per data di quotazione e alternanza: deterministico e
+  indipendente dai rendimenti. Dividere i simboli in base a come si comportano sarebbe
+  già una selezione e li brucerebbe entrambi. L''alternanza per anzianità dà ai lotti
+  profondità storica comparabile.'
+lotti:
+  A:
+    stato: SIGILLATO
+    aperto_da: null
+    simboli:
+      BCHUSDT:
+        barre: 57634
+        da: '2019-12-19'
+        a: '2026-07-16'
+        sha256: 8053e62d14b8746bd5732e058c4151337769c5cda45165e1b12cb70d246cccad
+      ETCUSDT:
+        barre: 56962
+        da: '2020-01-16'
+        a: '2026-07-16'
+        sha256: 3e267339923fad9ec4a72fc9167ea67c7df35a57513f7e17393b2d89c7d5bf3a
+      ZECUSDT:
+        barre: 56482
+        da: '2020-02-05'
+        a: '2026-07-16'
+        sha256: 3fe28f9e4890d264e285f17152c3e2c8fe813154c9be881c1422386f95958a7d
+      VETUSDT:
+        barre: 56266
+        da: '2020-02-14'
+        a: '2026-07-16'
+        sha256: 3feecceb5b8e1e283c3a6764259506add08a870579fa51afa27d47388917ad56
+      THETAUSDT:
+        barre: 53794
+        da: '2020-05-27'
+        a: '2026-07-16'
+        sha256: 81308b53f9305d9cd15561b8364d2d13a030031f5774358e479c34369709f8cf
+      SUSHIUSDT:
+        barre: 51395
+        da: '2020-09-04'
+        a: '2026-07-16'
+        sha256: 3f2f19fb25c4aa7d8db669d2718db2aef128a43a1a4f8a007cea23861342d33b
+  B:
+    stato: SIGILLATO
+    aperto_da: null
+    simboli:
+      EOSUSDT:
+        barre: 47042
+        da: '2020-01-08'
+        a: '2025-05-21'
+        sha256: ff420e652307b6dd5c593d3195b87cf8c83efe3275e228b053b90dfe37d973e3
+      XLMUSDT:
+        barre: 56866
+        da: '2020-01-20'
+        a: '2026-07-16'
+        sha256: 64e10494ff20f491a8ec78169a41235c5127aafa6f132a2fbcebca9960fb668b
+      IOTAUSDT:
+        barre: 56314
+        da: '2020-02-12'
+        a: '2026-07-16'
+        sha256: 4e1ddbc77fb0ed6a4d032d27e18d5f0d07ea5d4cba7cdcb52549745ab74afe4c
+      NEOUSDT:
+        barre: 56194
+        da: '2020-02-17'
+        a: '2026-07-16'
+        sha256: 0f30094c9e24d1073ea84ed8ca05ed5abbb5fd75d52ca45e874698aa8c8681e6
+      ALGOUSDT:
+        barre: 53313
+        da: '2020-06-16'
+        a: '2026-07-16'
+        sha256: 342df7eb72fa3f38314e454787763195f036e6c76c91d6743a1de0cced69bfe6
+      AAVEUSDT:
+        barre: 50387
+        da: '2020-10-16'
+        a: '2026-07-16'
+        sha256: 83519c08400b833f601635e8f2a24f253153500bab544c5a4eb3236851ba4f11

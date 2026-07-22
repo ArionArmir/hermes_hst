@@ -4,7 +4,13 @@ import streamlit as st
 
 from src.core.models import Config
 from utils import formatting, process_manager
-from utils.redis_client import get_heartbeat, get_trading_config, publish_engine_command, save_trading_config
+from utils.redis_client import (
+    get_circuit_breaker_status,
+    get_heartbeat,
+    get_trading_config,
+    publish_engine_command,
+    save_trading_config,
+)
 
 SERVICES = ["engine", "inference", "sentiment"]
 STALE_AFTER_SECONDS = {"engine": 20, "inference": 20, "sentiment": 60}
@@ -96,6 +102,26 @@ if (
     save_trading_config(updated.model_dump())
     st.toast("Configurazione aggiornata e pubblicata")
     st.rerun()
+
+st.subheader("Circuit breaker")
+cb_status = get_circuit_breaker_status()
+if cb_status is None:
+    st.info("Nessun dato: l'engine non ha ancora pubblicato lo stato del circuit breaker.")
+elif cb_status.get("tripped"):
+    st.error(f"⛔ Attivo: {cb_status.get('reason') or 'motivo non specificato'}")
+    if cb_status.get("cooldown_until"):
+        st.caption(f"Ripresa automatica prevista: {cb_status['cooldown_until']}")
+    if cb_status.get("drawdown_trip") or cb_status.get("daily_trip"):
+        st.caption(
+            "Pausa persistente (drawdown o perdita giornaliera): non si "
+            "riattiva da sola, serve un reset manuale."
+        )
+        if st.button("Reset circuit breaker", type="primary"):
+            publish_engine_command("reset_circuit_breaker")
+            st.success("Comando di reset inviato all'engine.")
+            st.rerun()
+else:
+    st.success(f"🟢 Nessuna pausa attiva (perdite consecutive: {cb_status.get('consecutive_losses', 0)})")
 
 st.subheader("Azioni di emergenza")
 reset_confirm_key = "confirm_reset_positions"

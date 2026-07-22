@@ -31,18 +31,40 @@ sys.path.insert(0, str(REPO_ROOT))
 
 # Soglie in secondi. Heartbeat: engine/inference li scrivono ogni ~5s,
 # sentiment ogni 15s. Tick: su Binance Futures BTC/ETH scambiano di continuo,
-# nessun tick per 3 minuti = WebSocket morto, non mercato fermo.
+# nessun tick per 3 minuti = WebSocket morto, non mercato fermo. Candele:
+# preavviso MOLTO prima del cutoff interno di CandleFeed (2h di default per
+# candele 1h) — un processo vivo (heartbeat OK) può comunque tradare su dati
+# di mercato stantii se Binance REST è irraggiungibile (docs/IMPROVEMENT_PLAN.md, V2).
 CHECKS = {
     "engine": {"key": "heartbeat_engine", "stale_after": 120},
     "inference": {"key": "heartbeat_inference", "stale_after": 120},
     "sentiment": {"key": "heartbeat_sentiment", "stale_after": 120},
+    "carry": {"key": "heartbeat_carry", "stale_after": 7800},
+    "liquidations": {"key": "heartbeat_liquidations", "stale_after": 400},
+    # Heartbeat ≠ dati: il 2026-07-19 lo stream forceOrder è rimasto muto 11
+    # ore (migrazione endpoint Binance) col heartbeat verde. Le liquidazioni
+    # market-wide non stanno mai ferme un'ora: silenzio = stream rotto.
+    "eventi liquidazioni": {"key": "last_liquidation_event", "stale_after": 3600},
+    "liquidations bybit": {"key": "heartbeat_liquidations_bybit", "stale_after": 400},
+    "sentiment v2": {"key": "heartbeat_sentiment_v2", "stale_after": 120},
+    "eventi liq. bybit": {"key": "last_liquidation_event_bybit", "stale_after": 3600},
     "tick engine": {"key": "last_tick_engine", "stale_after": 180},
     "tick inference": {"key": "last_tick_inference", "stale_after": 180},
+    "candele": {"key": "candle_feed_last_success", "stale_after": 900},
 }
-RESTARTABLE = ("engine", "inference", "sentiment")
+RESTARTABLE = ("engine", "inference", "sentiment", "carry", "liquidations")
 ALERT_STATE_KEY = "watchdog_alerted"
 REDIS_DOWN_MARKER = REPO_ROOT / "logs" / ".watchdog_redis_down"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
+
+# Model-health monitor (docs/IMPROVEMENT_PLAN.md, V4/N4): finestra di trade
+# recenti su cui giudicare, sotto questa soglia il campione è troppo piccolo
+# per un giudizio statistico. Le soglie assolute sono deliberatamente larghe
+# (un floor sotto il quale qualcosa è chiaramente andato storto), non la
+# taratura fine — quella resta compito di tune_strategy.py/walk_forward.py.
+MODEL_HEALTH_WINDOW = 20
+MODEL_HEALTH_MIN_TRADES = 10
+MODEL_HEALTH_HIT_RATE_FLOOR = 0.30
 
 
 def load_env(path: Path = REPO_ROOT / ".env"):
@@ -97,6 +119,112 @@ def check_ollama(base_url: Optional[str] = None) -> Optional[str]:
         return f"non raggiungibile ({url}): {e.__class__.__name__}"
 
 
+def check_config_drift(redis_client,
+                       manifest_path: Optional[Path] = None) -> Optional[str]:
+    """None se lo stato vivo coincide col manifest dichiarato
+    (config/forward_manifest.yaml): TUTTI i campi della config contro Redis,
+    più lo sha256 del champion su disco. Esiste per il 2026-07-20: un
+    riavvio di Redis ha resuscitato la soglia pre-esperimento (0.55 invece
+    di 0.50) e il forward ha girato ~20h fuori protocollo senza che nulla lo
+    segnalasse (docs/PRE_REGISTRO_FORWARD.md, registro incidenti). Il check
+    del modello copre anche il trainer settimanale rotto: se sovrascrivesse
+    champion.pkl, l'inference lo ricaricherebbe a caldo in silenzio."""
+    import hashlib
+    import json
+
+    import yaml
+    manifest_path = manifest_path or REPO_ROOT / "config" / "forward_manifest.yaml"
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text())
+        raw = redis_client.get("trading_config")
+    except Exception as e:
+        return f"manifest non confrontabile: {e}"
+
+    derive = []
+    if raw:                          # Redis vuoto: al prossimo avvio vince il YAML
+        live = json.loads(raw)
+        dichiarata = manifest["config"]
+        for campo, atteso in dichiarata.items():
+            if campo not in live:
+                # un campo ASSENTE non è innocuo (revisione branch 2026-07-21):
+                # l'engine fa Config(**data) e pydantic riempie col DEFAULT
+                # (per ml_confidence_threshold è 0.55 ≠ 0.50 dichiarato) → gira
+                # fuori protocollo mentre il vecchio check taceva. È la classe
+                # esatta dell'incidente del 2026-07-20.
+                derive.append(f"{campo}: ASSENTE dal config live (dichiarato {atteso!r}) "
+                              "— pydantic userebbe il default")
+            elif live[campo] != atteso:
+                derive.append(f"{campo}: live={live[campo]!r} dichiarato={atteso!r}")
+
+    modello = REPO_ROOT / "config" / "models" / "champion.pkl"
+    try:
+        sha = hashlib.sha256(modello.read_bytes()).hexdigest()
+        if sha != manifest["champion_sha256"]:
+            derive.append(f"champion.pkl: sha {sha[:12]} ≠ dichiarato "
+                          f"{manifest['champion_sha256'][:12]} — modello cambiato "
+                          "a esperimento in corso")
+    except OSError as e:
+        derive.append(f"champion.pkl illeggibile: {e}")
+    return "; ".join(derive) if derive else None
+
+
+def check_inference_fresca(redis_client, stale_after: int = 600) -> Optional[str]:
+    """None se le valutazioni ml_conf_* sono fresche. Esiste per la revisione
+    2026-07-21 (I1/I3): l'inference può ammutolire (eccezione sul loop, modello
+    rifiutato senza retry) restando 'active' con heartbeat verde — solo il ts
+    delle valutazioni invecchia, e nessuno lo sorvegliava. Guarda il ts più
+    recente tra i simboli: se l'inference valuta, almeno uno è fresco."""
+    import json
+    chiavi = list(redis_client.scan_iter("ml_conf_*"))
+    if not chiavi:
+        return None                 # nessun simbolo configurato: non è un guasto qui
+    ora = datetime.now(timezone.utc)
+    piu_recente = None
+    for raw in redis_client.mget(chiavi):
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(json.loads(raw)["ts"])
+            piu_recente = ts if piu_recente is None else max(piu_recente, ts)
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+    if piu_recente is None:
+        return "nessuna valutazione ml_conf_* leggibile"
+    age = (ora - piu_recente).total_seconds()
+    return (f"inference muta da {age:.0f}s (soglia {stale_after}s): loop fermo "
+            "o modello non caricato" if age > stale_after else None)
+
+
+def check_model_health(redis_client) -> Optional[str]:
+    """None se il comportamento recente del modello è nella norma,
+    descrizione del problema altrimenti. Non aziona nulla (il circuit
+    breaker già ferma le nuove aperture in una crisi acuta): rende visibile
+    un degrado GRADUALE che il circuit breaker da solo non intercetta —
+    il fold catastrofico del walk-forward era proprio questo, una sequenza
+    di trade in perdita scoperta solo guardando la dashboard a posteriori."""
+    from src.shared import store
+    trades = store.read_trades(limit=MODEL_HEALTH_WINDOW)
+    if len(trades) < MODEL_HEALTH_MIN_TRADES:
+        return None
+
+    hit_rate = float((trades["pnl"] > 0).mean())
+    net_pnl = float(trades["pnl"].sum())
+    # Combinare le due condizioni riduce i falsi positivi: un hit rate basso
+    # con PnL netto comunque positivo (poche vincite grandi, molte piccole
+    # perdite) può essere una strategia sana, non un modello che decade.
+    if not (hit_rate < MODEL_HEALTH_HIT_RATE_FLOOR and net_pnl < 0):
+        return None
+
+    detail = f"hit rate {hit_rate:.0%} e PnL netto {net_pnl:+.2f} USDT sugli ultimi {len(trades)} trade"
+    expected = redis_client.get("champion_hit_rate")
+    if expected:
+        try:
+            detail += f" (il champion prometteva {float(expected):.0%} in validation)"
+        except ValueError:
+            pass
+    return detail
+
+
 def split_transitions(previously_alerted: Set[str],
                       problems: Dict[str, Optional[str]]) -> Tuple[Dict[str, str], List[str]]:
     """(nuovi problemi da notificare, check rientrati da notificare come
@@ -139,6 +267,22 @@ def main() -> int:
     values = dict(zip(keys, client.mget(keys)))
     problems = evaluate_checks(values, now)
     problems["ollama"] = check_ollama()
+
+    # Il watchdog è l'ultima linea di difesa: un sotto-check che ESPLODE (es.
+    # trading_config corrotto in Redis → json.loads che solleva, o una chiave
+    # mancante nel manifest) non deve zittire TUTTI gli allarmi facendo crashare
+    # main() prima di split_transitions/notify. Isoliamo ognuno: se fallisce, il
+    # guasto del check diventa esso stesso un problema segnalato.
+    def _check_isolato(nome, fn):
+        try:
+            return fn()
+        except Exception as e:
+            print(f"[watchdog] sotto-check '{nome}' fallito: {e}")
+            return f"check non eseguibile: {e}"
+
+    problems["modello"] = _check_isolato("modello", lambda: check_model_health(client))
+    problems["config drift"] = _check_isolato("config drift", lambda: check_config_drift(client))
+    problems["valutazioni ml"] = _check_isolato("valutazioni ml", lambda: check_inference_fresca(client))
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 
@@ -153,6 +297,14 @@ def main() -> int:
         print(f"[watchdog] rientrati: {names}")
         notifier.send_telegram(f"✅ Watchdog Hermes: rientrato — {names}")
         client.srem(ALERT_STATE_KEY, *recovered)
+
+    # il feed eventi deriva dagli artefatti: un suo errore non deve mai
+    # zittire il watchdog, che è l'ultima linea di difesa
+    try:
+        from src.eventi.osservatore import osserva_tutto
+        osserva_tutto(new_alerts, recovered)
+    except Exception as e:
+        print(f"[watchdog] osservatore eventi fallito (non bloccante): {e}")
 
     if args.restart:
         stale_services = [name for name, desc in problems.items()

@@ -18,6 +18,7 @@ from src.shared.redis_client import RedisClient
 from src.shared.features import compute_latest_features, FEATURE_COLS
 from src.shared.candle_feed import CandleFeed
 from src.shared.ohlc_aggregator import OHLCAggregator
+from src.shared.throttle import WriteThrottle
 from src.training.feature_engine import TARGET_DOWN, TARGET_FLAT, TARGET_UP
 from src.shared.signal_policy import signal_from_proba, SIGNAL_PROB_THRESHOLD
 
@@ -34,9 +35,18 @@ class MLInference:
         # (config.timeframe), scaricate via REST: mai sui tick del WebSocket,
         # che qui serve solo per prezzi live e candele 1m della dashboard.
         self.candle_feed = CandleFeed(interval="1h")
+        # Persistenza dei tick limitata (0.5s): lo stato in memoria resta
+        # per-tick, Redis no — vedi src/shared/throttle.py
+        self._tick_throttle = WriteThrottle(interval_seconds=0.5)
+        self._listener_backoff_seconds = 5
         self.ohlc_aggregator = OHLCAggregator()
         self.latest_prices = {}
         self.config = None
+        # metadati del modello pubblicati su Redis a ogni (ri)caricamento, così
+        # la pagina Analisi li LEGGE invece di ricaricare il pickle (~650ms) al
+        # primo render — e mostra il modello DAVVERO in servizio, hot-reload inclusi
+        self.model_meta = None
+        self._meta_da_pubblicare = False
 
     async def initialize(self):
         logger.info("🧠 Avvio ML Inference con dati reali...")
@@ -68,10 +78,18 @@ class MLInference:
                         logger.info("✅ Configurazione caricata da YAML")
                 except Exception as e:
                     logger.warning(f"⚠️ Config YAML non trovato: {e}")
-                    self._apply_config(Config())
+                    if self.config is None:
+                        self._apply_config(Config())
         except Exception as e:
-            logger.error(f"❌ Errore caricamento config: {e}")
-            self._apply_config(Config())
+            # revisione 2026-07-21 (I2): MAI regredire ai default hardcoded
+            # (soglia 0.55, 3 simboli) sovrascrivendo una config buona gia'
+            # in memoria — un hiccup di Redis durante un reload replicherebbe
+            # l'incidente della deriva soglia, invisibile al manifest.
+            logger.error(f"❌ Errore caricamento config: {e}"
+                         + (" — tengo la config corrente" if self.config else
+                            " — nessuna config precedente, uso i default"))
+            if self.config is None:
+                self._apply_config(Config())
 
     def _apply_config(self, config: Config):
         self.symbols = [s.lower() for s in config.symbols]
@@ -80,18 +98,26 @@ class MLInference:
             self.candle_feed = CandleFeed(interval=config.timeframe)
         self.config = config
 
+    LISTENER_CHANNELS = ('config_updated', 'model_swap')
+
     async def _redis_listener(self):
-        pubsub = await self.redis.subscribe('config_updated')
-        await self.redis.subscribe('model_swap')
-        try:
-            async for message in pubsub.listen():
-                if message['type'] == 'message':
-                    await self._on_pubsub_message(message['channel'])
-        except Exception as e:
-            logger.error(f"❌ Errore Redis listener: {e}")
-            if self.running:
-                await asyncio.sleep(5)
-                asyncio.create_task(self._redis_listener())
+        """Loop con recovery e pubsub NUOVO a ogni errore (il vecchio schema
+        riusava lo stesso pubsub, potenzialmente irrecuperabile dopo un
+        errore di connessione: il listener moriva in silenzio e l'inference
+        smetteva di ricevere reload di config e swap del modello)."""
+        while self.running:
+            try:
+                pubsub = await self.redis.subscribe_fresh(*self.LISTENER_CHANNELS)
+                logger.info(f"👂 Listener Redis attivo su: {', '.join(self.LISTENER_CHANNELS)}")
+                async for message in pubsub.listen():
+                    if message['type'] == 'message':
+                        await self._on_pubsub_message(message['channel'])
+                    if not self.running:
+                        break
+            except Exception as e:
+                logger.error(f"❌ Errore Redis listener: {e}")
+                if self.running:
+                    await asyncio.sleep(self._listener_backoff_seconds)
 
     async def _on_pubsub_message(self, channel: str):
         if isinstance(channel, bytes):
@@ -108,6 +134,25 @@ class MLInference:
             logger.info("🔄 Nuovo champion pubblicato dal trainer, ricarico il modello...")
             self._load_model()
 
+    def _imposta_meta(self, model, trained_names: list, compatibile: bool):
+        """Prepara i metadati del modello per la dashboard (pubblicati dal loop).
+        Include data di training (mtime del file), feature, classi, importanze
+        e compatibilità — tutto ciò che la pagina Analisi mostra."""
+        try:
+            mtime = os.path.getmtime(self.model_path)
+            self.model_meta = {
+                "disponibile": True, "compatibile": compatibile,
+                "trained_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
+                "n_classi": len(model.classes_),
+                "feature": trained_names,
+                "importanze": [float(x) for x in model.feature_importances_],
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.warning(f"metadati modello non calcolabili: {e}")
+            self.model_meta = {"disponibile": True, "compatibile": compatibile}
+        self._meta_da_pubblicare = True
+
     def _load_model(self):
         try:
             if os.path.exists(self.model_path):
@@ -122,6 +167,7 @@ class MLInference:
                         f"❌ Modello incompatibile: addestrato su {trained_names}, "
                         f"attese {FEATURE_COLS}. Rilanciare train_all_models.py. Nessun segnale verrà emesso."
                     )
+                    self._imposta_meta(model, trained_names, compatibile=False)
                     self.model = None
                     return
                 expected_classes = [TARGET_DOWN, TARGET_FLAT, TARGET_UP]
@@ -130,9 +176,11 @@ class MLInference:
                         f"❌ Modello incompatibile: classi {list(model.classes_)}, attese {expected_classes} "
                         f"(down/flat/up). Rilanciare train_all_models.py. Nessun segnale verrà emesso."
                     )
+                    self._imposta_meta(model, trained_names, compatibile=False)
                     self.model = None
                     return
                 self.model = model
+                self._imposta_meta(model, trained_names, compatibile=True)
                 logger.info(
                     f"✅ Modello caricato da {self.model_path} "
                     f"({len(trained_names)} feature e {len(expected_classes)} classi validate)"
@@ -140,9 +188,18 @@ class MLInference:
             else:
                 logger.warning(f"⚠️ Modello non trovato: {self.model_path}")
                 self.model = None
+                self.model_meta = {"disponibile": False,
+                                   "ts": datetime.now(timezone.utc).isoformat()}
+                self._meta_da_pubblicare = True
         except Exception as e:
-            logger.error(f"❌ Errore caricamento modello: {e}")
-            self.model = None
+            # revisione 2026-07-21 (I3): un load fallito su file a metà
+            # scrittura (il trainer promuove con shutil.copy, non atomico)
+            # NON deve azzerare un modello valido gia' in servizio — meglio
+            # continuare col vecchio champion che restare muti a tempo indefinito.
+            if self.model is not None:
+                logger.error(f"❌ Errore caricamento modello: {e} — tengo il modello corrente")
+            else:
+                logger.error(f"❌ Errore caricamento modello: {e} — nessun modello in servizio")
 
     async def _websocket_loop(self):
         while self.running:
@@ -166,7 +223,8 @@ class MLInference:
                                 if price <= 0 or volume <= 0:
                                     continue
                                 self.latest_prices[symbol] = price
-                                await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
+                                if self._tick_throttle.ready("last_tick_inference"):
+                                    await self.redis.set('last_tick_inference', datetime.now(timezone.utc).isoformat())
                                 self.ohlc_aggregator.add_tick(symbol.upper(), price, volume)
                         except Exception as e:
                             logger.error(f"❌ Errore WebSocket: {e}")
@@ -184,13 +242,34 @@ class MLInference:
     def _signal_from_proba(self, proba) -> tuple:
         """Delega alla policy condivisa con il backtester
         (src/shared/signal_policy.py): live e simulazione devono decidere
-        con la stessa identica regola."""
-        return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP])
+        con la stessa identica regola. La soglia viene dalla config
+        (ml_confidence_threshold): è L'UNICO regolatore di selettività del
+        sistema, tarabile da dashboard e dal backtester."""
+        threshold = self.config.ml_confidence_threshold if self.config else SIGNAL_PROB_THRESHOLD
+        return signal_from_proba(proba[TARGET_DOWN], proba[TARGET_UP], threshold=threshold)
+
+    async def _publish_candle_feed_health(self):
+        """Il più vecchio fetch riuscito tra i simboli configurati: se
+        Binance REST è irraggiungibile a lungo, questo smette di aggiornarsi
+        e il watchdog lo segnala MOLTO prima che CandleFeed smetta di
+        servire candele del tutto (docs/IMPROVEMENT_PLAN.md, V2) — un
+        preavviso, non solo lo stop finale."""
+        oldest = self.candle_feed.oldest_last_success([s.upper() for s in self.symbols])
+        if oldest is not None:
+            await self.redis.set('candle_feed_last_success', oldest.isoformat())
 
     async def _inference_loop(self):
         while self.running:
-            await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
+            # revisione 2026-07-21 (I1): heartbeat e telemetria salute DENTRO
+            # il try — un'eccezione Redis qui non deve uccidere il loop lasciando
+            # il processo vivo con heartbeat verde (watchdog cieco).
             try:
+                await self.redis.set('heartbeat_inference', datetime.now(timezone.utc).isoformat())
+                await self._publish_candle_feed_health()
+                if self._meta_da_pubblicare:      # pubblica-al-cambio, non ogni ciclo
+                    await self.redis.set('model_meta', json.dumps(self.model_meta))
+                    self._meta_da_pubblicare = False
+
                 if self.model is None:
                     await asyncio.sleep(1)
                     continue
@@ -199,6 +278,9 @@ class MLInference:
                 positions_data = await self.redis.get_json('positions')
 
                 for symbol in self.symbols:
+                  # revisione 2026-07-21 (I9): un simbolo problematico non deve
+                  # affamare i successivi — try per simbolo, non per ciclo
+                  try:
                     candles = await self.candle_feed.get_candles(symbol.upper())
                     # DataFrame 1×N con i nomi di colonna: XGBoost valida che
                     # corrispondano a quelli visti in training (con un ndarray
@@ -209,6 +291,26 @@ class MLInference:
 
                     proba = self.model.predict_proba(features)[0]
                     action, prob = self._signal_from_proba(proba)
+
+                    # Telemetria di confidenza: OGNI valutazione, anche sotto
+                    # soglia. L'inference pubblica segnali solo sopra soglia,
+                    # quindi senza questa chiave "zero trade" e' indistinguibile
+                    # da "zero valutazioni": qui si vede quanto ci si e' andati
+                    # vicini, per simbolo, senza toccare la selettivita'.
+                    conf = float(max(proba[TARGET_DOWN], proba[TARGET_UP]))
+                    tele_key = f"ml_conf_{symbol.upper()}"
+                    prev = await self.redis.get_json(tele_key) or {}
+                    oggi = datetime.now(timezone.utc).date().isoformat()
+                    max_oggi = max(conf, prev.get("max_oggi", 0.0)
+                                   if prev.get("giorno") == oggi else 0.0)
+                    await self.redis.set(tele_key, {
+                        "p_down": round(float(proba[TARGET_DOWN]), 4),
+                        "p_up": round(float(proba[TARGET_UP]), 4),
+                        "conf": round(conf, 4),
+                        "max_oggi": round(max_oggi, 4),
+                        "giorno": oggi,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    })
 
                     # Non inviare segnali "hold" per non inquinare i log
                     if action == "hold":
@@ -236,6 +338,8 @@ class MLInference:
 
                     await self.redis.publish('ml_signals', signal.model_dump())
                     logger.debug(f"📊 {symbol.upper()} Segnale ML: {action} (conf={prob:.2f})")
+                  except Exception as e:
+                    logger.error(f"❌ Errore su {symbol.upper()}: {e}")
 
             except Exception as e:
                 logger.error(f"❌ Errore inference loop: {e}")

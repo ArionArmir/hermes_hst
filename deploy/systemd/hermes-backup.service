@@ -1,0 +1,7 @@
+[Unit]
+Description=Hermes - backup settimanale dei dati non ricostruibili
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/hermes_hft
+ExecStart=%h/hermes_hft/scripts/backup_prezioso.sh

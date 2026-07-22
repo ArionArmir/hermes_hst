@@ -27,6 +27,10 @@ st.set_page_config(page_title="Hermes Dashboard", layout="wide", page_icon=":mat
 pages = st.navigation([
     st.Page("app_pages/home.py", title="Dashboard", icon=":material/monitoring:", default=True),
     st.Page("app_pages/analysis.py", title="Analisi", icon=":material/analytics:"),
+    st.Page("app_pages/piano.py", title="Piano", icon=":material/account_balance:"),
+    st.Page("app_pages/carry.py", title="Carry", icon=":material/savings:"),
+    st.Page("app_pages/forward.py", title="Forward 0.50", icon=":material/science:"),
+    st.Page("app_pages/liquidazioni.py", title="Liquidazioni", icon=":material/waterfall_chart:"),
     st.Page("app_pages/configuration.py", title="Configurazione", icon=":material/settings:"),
     st.Page("app_pages/control.py", title="Controllo", icon=":material/tune:"),
     st.Page("app_pages/logs.py", title="Log", icon=":material/description:"),

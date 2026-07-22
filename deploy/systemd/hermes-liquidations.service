@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes - Registratore liquidazioni (forceOrder)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hermes_hft
+EnvironmentFile=-%h/hermes_hft/.env
+ExecStart=%h/hermes_hft/venv/bin/python -m src.liquidations.main
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

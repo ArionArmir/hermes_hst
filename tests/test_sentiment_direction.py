@@ -6,7 +6,9 @@ Sentiment direzionale nell'engine (docs/IMPROVEMENT_PLAN.md, S4):
 - mappa asset→simbolo dinamica, non più hardcoded BTC/ETH/SOL.
 
 Numeri di riferimento (sentiment_weight=0.3, soglia=0.55):
-confidenza pesata = 0.7 × conf + 0.3 × max(0, sentiment direzionale).
+confidenza pesata = min(1, conf + 0.3 × max(0, sentiment direzionale)) —
+bonus-only: il sentiment neutro NON penalizza (la vecchia media pesata
+0.7×conf creava un secondo gate nascosto sopra la soglia della policy).
 """
 import asyncio
 import json
@@ -61,7 +63,7 @@ def test_sell_blocked_by_strong_positive_sentiment():
 
 
 def test_sell_allowed_with_negative_sentiment():
-    # Sentiment negativo è FAVOREVOLE a uno short: 0.7×0.8 + 0.3×0.6 = 0.74
+    # Sentiment negativo è FAVOREVOLE a uno short: 0.8 + 0.3×0.6 = 0.98
     engine = _make_engine()
     engine.sentiment_by_asset["BTCUSDT"] = -0.6
 
@@ -70,22 +72,31 @@ def test_sell_allowed_with_negative_sentiment():
     assert engine.positions["BTCUSDT"].side == "short"
 
 
+def test_neutral_sentiment_does_not_penalize_confidence():
+    # conf 0.7 con sentiment neutro: pesata = 0.7 ≥ 0.55 → apre.
+    # (Con la vecchia media pesata sarebbe stata 0.49 e il segnale, già
+    # sopra la soglia della policy, sarebbe morto nel gate nascosto.)
+    engine = _make_engine()
+    _send(engine, "buy", confidence=0.7)
+    assert engine.positions["BTCUSDT"].side == "long"
+
+
 def test_favorable_sentiment_boosts_confidence_over_threshold():
     engine = _make_engine()
 
-    # Senza sentiment: 0.7 × 0.7 = 0.49 < 0.55 → ignorato
-    _send(engine, "buy", confidence=0.7)
+    # Sotto soglia senza aiuto: 0.5 < 0.55 → ignorato
+    _send(engine, "buy", confidence=0.5)
     assert "BTCUSDT" not in engine.positions
 
-    # Con sentiment favorevole: 0.49 + 0.3 × 0.8 = 0.73 ≥ 0.55 → apre
+    # Con sentiment favorevole: 0.5 + 0.3 × 0.8 = 0.74 ≥ 0.55 → apre
     engine.sentiment_by_asset["BTCUSDT"] = 0.8
-    _send(engine, "buy", confidence=0.7)
+    _send(engine, "buy", confidence=0.5)
     assert engine.positions["BTCUSDT"].side == "long"
 
 
 def test_mildly_contrary_sentiment_gives_no_boost_but_no_veto():
     # -0.3: sopra il veto (-0.5), ma contributo azzerato dal max(0, ·):
-    # 0.7 × 0.9 = 0.63 ≥ 0.55 → apre comunque (il vecchio abs() avrebbe
+    # pesata = 0.9 ≥ 0.55 → apre comunque (il vecchio abs() avrebbe
     # aggiunto +0.09 di confidenza immeritata)
     engine = _make_engine()
     engine.sentiment_by_asset["BTCUSDT"] = -0.3

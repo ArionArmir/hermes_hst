@@ -41,6 +41,8 @@ SIGNAL_OUTCOMES = (
     "NO_PRICE",           # prezzo non disponibile
     "NO_CAPITAL",         # sizing nullo
     "EXPOSURE_CAP",       # cap di margine portafoglio raggiunto
+    "DIRECTION_CAP",      # troppe posizioni già aperte nella stessa direzione
+    "CIRCUIT_BREAKER",    # pausa attiva: perdite consecutive, giornaliere o drawdown
 )
 
 _SCHEMA = """
@@ -149,6 +151,50 @@ def read_trades(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFra
 
 def read_signals(limit: int = 200, db_path: Optional[Path] = None) -> pd.DataFrame:
     return _read_sql("SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", limit, db_path)
+
+
+_TABELLE_INCREMENTALI = {"signals", "trades"}
+
+
+def _read_since(tabella: str, cursor_id: int, limit: int,
+                db_path: Optional[Path]) -> pd.DataFrame:
+    """Righe con id > cursor_id, in ordine CRESCENTE (revisione branch
+    2026-07-21): l'osservatore eventi deve avanzare contiguo dal cursore, non
+    prendere le N più recenti — o un arretrato > limit salterebbe gli eventi
+    più vecchi per sempre. Ordine crescente = al più si resta indietro, mai si salta."""
+    # allow-list del nome tabella (interpolato in f-string): oggi solo chiamanti
+    # interni con valori letterali, ma la guardia impedisce che una futura
+    # chiamata con input variabile diventi iniettabile (revisione branch).
+    if tabella not in _TABELLE_INCREMENTALI:
+        raise ValueError(f"tabella non consentita: {tabella!r}")
+    with _connect(db_path) as conn:
+        with pd.option_context("mode.string_storage", "python"):
+            return pd.read_sql_query(
+                f"SELECT * FROM {tabella} WHERE id > ? ORDER BY id ASC LIMIT ?",
+                conn, params=(cursor_id, limit))
+
+
+def read_signals_since(cursor_id: int, limit: int = 5000,
+                       db_path: Optional[Path] = None) -> pd.DataFrame:
+    return _read_since("signals", cursor_id, limit, db_path)
+
+
+def read_trades_since(cursor_id: int, limit: int = 5000,
+                      db_path: Optional[Path] = None) -> pd.DataFrame:
+    return _read_since("trades", cursor_id, limit, db_path)
+
+
+def count_signals(outcome: Optional[str] = None, db_path: Optional[Path] = None) -> int:
+    """Conteggio O(1)-ish dei segnali (tutti, o per outcome). Sostituisce il
+    pattern 'read_signals(limit=100_000) poi sum' che leggeva l'intera tabella
+    solo per contare — inefficiente man mano che i segnali si accumulano."""
+    query = "SELECT COUNT(*) FROM signals"
+    params: tuple = ()
+    if outcome is not None:
+        query += " WHERE outcome = ?"
+        params = (outcome,)
+    with _connect(db_path) as conn:
+        return int(conn.execute(query, params).fetchone()[0])
 
 
 def read_sentiment(limit: int = 1000, db_path: Optional[Path] = None) -> pd.DataFrame:

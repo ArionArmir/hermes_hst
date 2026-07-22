@@ -1,0 +1,11 @@
+[Unit]
+# Sostituisce la riga di cron: cron non riparte da solo dopo un riavvio
+# WSL, i timer utente si'.
+Description=Hermes - Watchdog ogni minuto
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

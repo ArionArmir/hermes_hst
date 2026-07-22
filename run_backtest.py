@@ -2,6 +2,12 @@
 """
 Backtest del champion sui simboli configurati, con fee e slippage.
 
+Due tabelle: per-simbolo (backtest_portfolio, capitale indipendente per
+simbolo — utile per capire il contributo di ciascuno) e PORTFOLIO
+(backtest_joint, capitale e cap di margine condivisi come l'engine live —
+il numero che conta davvero, perché tiene conto del rischio di correlazione
+tra simboli: docs/IMPROVEMENT_PLAN.md, scoperto con walk_forward.py).
+
 Uso:
   python run_backtest.py                # ultimo 20% delle candele storiche
   python run_backtest.py --days 60      # ultimi 60 giorni
@@ -16,8 +22,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.backtest import BacktestParams, backtest_portfolio
+from src.backtest import BacktestParams, backtest_portfolio, backtest_joint
 from src.data_collector import DataCollector
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 
 CONFIG_PATH = "config/trading_params.yaml"
@@ -51,15 +58,29 @@ def main():
         leverage=config.get("leverage", 3),
         max_exposure=config.get("max_exposure", 0.5),
         taker_fee_pct=config.get("taker_fee_pct", 0.0005),
+        # Stessa soglia del sistema live: ml_confidence_threshold è l'unico
+        # regolatore di selettività (usato da inference e policy)
+        prob_threshold=config.get("ml_confidence_threshold", 0.55),
+        max_positions_same_direction=config.get("max_positions_same_direction"),
+        circuit_breaker=CircuitBreakerParams.from_config(config),
     )
     results = backtest_portfolio(model, candles_by_symbol, params)
 
     print(f"\nModello: {args.model}")
+    print("--- Per simbolo (capitale indipendente) ---")
     print(f"{'simbolo':10s} {'trade':>6s} {'PnL netto':>10s} {'fee':>8s} {'ritorno':>8s} "
           f"{'hit rate':>8s} {'max DD':>7s} {'Sharpe':>7s}")
     for symbol, r in results.items():
         print(f"{symbol:10s} {r.n_trades:6d} {r.net_pnl:10.2f} {r.fees:8.2f} "
               f"{r.return_pct:8.2%} {r.hit_rate:8.1%} {r.max_drawdown_pct:7.2%} {r.sharpe:7.2f}")
+
+    joint = backtest_joint(model, candles_by_symbol, params)
+    print("\n--- PORTFOLIO (capitale e cap di margine condivisi, come l'engine live) ---")
+    if joint is None:
+        print("dati insufficienti per la simulazione a portafoglio condiviso")
+    else:
+        print(f"{'PORTFOLIO':10s} {joint.n_trades:6d} {joint.net_pnl:10.2f} {joint.fees:8.2f} "
+              f"{joint.return_pct:8.2%} {joint.hit_rate:8.1%} {joint.max_drawdown_pct:7.2%} {joint.sharpe:7.2f}")
 
 
 if __name__ == "__main__":

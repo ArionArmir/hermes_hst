@@ -5,11 +5,12 @@ max_position_size_usdt: 50.0
 trailing_stop_pct: 0.015
 # Frazione max del capitale impegnabile come margine (tutte le posizioni)
 max_exposure: 0.5
+# Max posizioni simultanee nella STESSA direzione: con crypto correlate,
+# max_exposure da solo non basta (rischio di ribasso sincrono che chiude
+# in blocco più simboli long/short insieme). Tarato con walk_forward.py.
+max_positions_same_direction: 3
 # Fee taker simulate per lato (0.05% Binance Futures)
 taker_fee_pct: 0.0005
-min_volatility_threshold: 0.001
-max_volatility_threshold: 0.02
-volatility_adjustment: true
 symbols:
   - BTCUSDT
   - ETHUSDT
@@ -19,7 +20,10 @@ symbols:
   - BNBUSDT
   - XRPUSDT
 timeframe: 1h
-ml_confidence_threshold: 0.55
+# UNICO regolatore di selettività dei segnali (usato da inference/policy,
+# engine e backtest). Tarato 2026-07-16 con tune_strategy.py su due finestre
+# out-of-sample; sopra 0.60 i segnali quasi spariscono.
+ml_confidence_threshold: 0.50
 sentiment_weight: 0.3
 # Allineato all'orizzonte del target del modello: 5 candele × 1h.
 # Se cambi timeframe o TARGET_HORIZON_BARS, aggiorna anche questo.
@@ -29,3 +33,13 @@ max_holding_minutes: 300
 reverse_cooldown_minutes: 15
 reverse_confidence_margin: 0.05
 entry_cooldown_minutes: 60
+# Circuit breaker: pausa le nuove aperture (mai le chiusure) quando la
+# sequenza recente di trade segnala un regime in cui il modello sbaglia
+# ripetutamente. Vedi src/shared/circuit_breaker.py e docs/IMPROVEMENT_PLAN.md
+# Tarato con walk_forward.py sweep 4 fold (2026-07-16): un cooldown breve
+# non protegge dal fold catastrofico (durava ~15h); serve un cooldown lungo.
+circuit_breaker_enabled: true
+circuit_breaker_max_consecutive_losses: 3
+circuit_breaker_cooldown_minutes: 1440
+circuit_breaker_max_daily_loss_pct: 0.05
+circuit_breaker_max_drawdown_pct: 0.20

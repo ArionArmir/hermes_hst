@@ -32,6 +32,8 @@ UNITS = {
     "engine": "hermes-engine.service",
     "inference": "hermes-inference.service",
     "sentiment": "hermes-sentiment.service",
+    "carry": "hermes-carry.service",
+    "liquidations": "hermes-liquidations.service",
 }
 
 LOG_PREFIX = {

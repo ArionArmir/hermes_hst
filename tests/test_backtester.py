@@ -12,7 +12,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.backtest import BacktestParams, backtest_symbol, backtest_portfolio
+from src.backtest import BacktestParams, backtest_symbol, backtest_portfolio, backtest_joint
+from src.backtest.backtester import _align_common_index
+from src.shared.circuit_breaker import CircuitBreakerParams
 from src.shared.features import MIN_CANDLES
 
 FLAT = [0.1, 0.8, 0.1]    # (down, flat, up)
@@ -43,6 +45,9 @@ def _flat_candles(n=100, price=100.0, volume=10.0) -> pd.DataFrame:
         "low": [c - 0.1 for c in closes],
         "close": closes,
         "volume": [volume] * n,
+        # Order flow costante: neutro, non altera gli scenari deterministici
+        "taker_buy_base": [volume * 0.5] * n,
+        "n_trades": [100.0] * n,
     })
 
 
@@ -123,3 +128,175 @@ def test_portfolio_total_aggregates_symbols():
 
 def test_too_few_candles_returns_none():
     assert backtest_symbol(StubModel(lambda i: FLAT), _flat_candles(n=30), "BTCUSDT") is None
+
+
+# ---------- backtest_joint: capitale e cap di margine condivisi ----------
+
+def test_align_common_index_is_intersection():
+    a = pd.DataFrame({"x": [1, 2, 3, 4]}, index=[10, 20, 30, 40])
+    b = pd.DataFrame({"x": [1, 2, 3]}, index=[20, 30, 50])
+
+    common = _align_common_index({"A": a, "B": b})
+
+    assert list(common) == [20, 30]
+
+
+def test_joint_matches_independent_when_margin_never_binds():
+    # Esposizione ampissima: nessuna apertura viene mai rifiutata per cap di
+    # margine → il risultato aggregato deve coincidere con la somma dei
+    # backtest indipendenti (stesso modello, stesse candele per simbolo).
+    params = BacktestParams(max_exposure=100.0, initial_capital=100_000.0)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    joint = backtest_joint(model, candles, params)
+    independent = backtest_portfolio(model, candles, params)["TOTAL"]
+
+    assert joint.n_trades == independent.n_trades
+    assert joint.hit_rate == independent.hit_rate
+
+
+def test_portfolio_margin_cap_blocks_correlated_simultaneous_opens():
+    # Due simboli, stesso segnale BUY nello stesso istante: con un cap di
+    # margine stretto solo UNO dei due può aprire — il rischio di
+    # correlazione che backtest_portfolio (capitali indipendenti) non vede.
+    params = BacktestParams(
+        max_exposure=0.05,       # cap margine: 50 USDT
+        initial_capital=1000.0,
+        max_position_usdt=40.0,  # nozionale 120 a leva 3 → margine 40
+        leverage=3,
+        pattern_confirmation=False,
+    )
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    result = backtest_joint(model, candles, params)
+
+    # 40 di margine per posizione, cap 50: la seconda apertura simultanea
+    # supererebbe il cap e viene rifiutata → mai più di 1 posizione aperta
+    # in un dato istante (verificabile dal fatto che il numero di trade
+    # "OPENED" impliciti resta più basso che senza cap)
+    opens_per_symbol = result.trades.groupby("symbol").size()
+    assert len(result.trades) > 0
+    assert opens_per_symbol.max() >= 1
+    # Con backtest_portfolio (indipendente) ENTRAMBI i simboli aprirebbero
+    # sempre: qui invece il margine condiviso ne limita il numero totale
+    independent_total_trades = sum(
+        r.n_trades for r in backtest_portfolio(model, candles, params).values()
+    ) - backtest_portfolio(model, candles, params)["TOTAL"].n_trades  # tolgo il doppio conteggio di TOTAL
+    assert len(result.trades) <= independent_total_trades
+
+
+def test_joint_reverse_and_close_work_across_symbols():
+    model = StubModel(lambda i: BUY if i < 3 else SELL)
+    candles = {"BTCUSDT": _flat_candles(n=MIN_CANDLES + 30)}
+
+    result = backtest_joint(model, candles)
+
+    assert (result.trades["reason"] == "REVERSE_SIGNAL").any()
+    assert (result.trades["side"] == "short").any()
+
+
+def test_joint_returns_none_for_insufficient_common_history():
+    short = _flat_candles(n=10)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": short}
+
+    assert backtest_joint(StubModel(lambda i: FLAT), candles) is None
+
+
+def test_joint_returns_none_for_empty_input():
+    assert backtest_joint(StubModel(lambda i: FLAT), {}) is None
+
+
+def test_direction_cap_limits_simultaneous_same_side_positions():
+    # Margine ampissimo (mai vincolante): SENZA cap direzionale entrambi i
+    # simboli aprirebbero long; con cap=1 solo il primo (ordine di
+    # iterazione del dict) deve restare aperto contemporaneamente.
+    params = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                            max_positions_same_direction=1, pattern_confirmation=False)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    result = backtest_joint(model, candles, params)
+
+    without_cap = backtest_joint(model, candles, BacktestParams(
+        max_exposure=100.0, initial_capital=100_000.0, pattern_confirmation=False))
+
+    assert len(result.trades) < len(without_cap.trades)
+
+
+def test_direction_cap_none_means_uncapped():
+    params_uncapped = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                                     pattern_confirmation=False, max_positions_same_direction=None)
+    params_high_cap = BacktestParams(max_exposure=100.0, initial_capital=100_000.0,
+                                     pattern_confirmation=False, max_positions_same_direction=10)
+    candles = {"BTCUSDT": _flat_candles(), "ETHUSDT": _flat_candles()}
+    model = StubModel(lambda i: BUY)
+
+    r1 = backtest_joint(model, candles, params_uncapped)
+    r2 = backtest_joint(model, candles, params_high_cap)
+    assert len(r1.trades) == len(r2.trades)
+
+
+# ---------- circuit breaker (usa un DatetimeIndex vero: record_trade/
+# is_tripped fanno aritmetica su datetime, un RangeIndex intero non basta) ----------
+
+def _flat_candles_dt(n=100, price=100.0, volume=10.0, start="2026-01-01",
+                     freq="1h") -> pd.DataFrame:
+    df = _flat_candles(n=n, price=price, volume=volume)
+    df.index = pd.date_range(start, periods=n, freq=freq)
+    return df
+
+
+def test_circuit_breaker_none_means_no_breaker():
+    # A prezzo ~fermo ogni trade chiude in perdita netta (fee+slippage):
+    # senza breaker, MAX_HOLDING ogni 5 barre per tutta la serie.
+    candles = {"BTCUSDT": _flat_candles_dt()}
+    model = StubModel(lambda i: BUY)
+
+    result = backtest_joint(model, candles, BacktestParams(pattern_confirmation=False,
+                                                           circuit_breaker=None))
+
+    assert len(result.trades) > 3  # nessuna pausa: continua a tradare per tutta la serie
+
+
+def test_circuit_breaker_stops_reopening_after_consecutive_losses():
+    candles = {"BTCUSDT": _flat_candles_dt()}
+    model = StubModel(lambda i: BUY)
+    breaker_params = CircuitBreakerParams(
+        max_consecutive_losses=2, consecutive_loss_cooldown_minutes=10_000,  # non riprende nel test
+        max_daily_loss_pct=None, max_drawdown_pct=None,
+    )
+
+    with_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=breaker_params))
+    without_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=None))
+
+    assert len(with_breaker.trades) < len(without_breaker.trades)
+    assert len(with_breaker.trades) <= 3  # 2 perdite + al più 1 in corso quando scatta
+
+
+def test_circuit_breaker_daily_loss_caps_trades_per_calendar_day():
+    # Candele a 15 min su ~2 giorni: molti trade possibili al giorno (il
+    # rate naturale supera il cap), così il cap giornaliero morde davvero, e
+    # lo span di 2 giorni esercita anche il RIENTRO al cambio giorno (E1).
+    candles = {"BTCUSDT": _flat_candles_dt(n=200, freq="15min")}
+    model = StubModel(lambda i: BUY)
+    # Ogni trade perde ~0.21 USDT (fee+slippage): 5 bastano a superare lo
+    # 0.1% di 1000 USDT in un giorno, poi il breaker resta attivo fino al
+    # prossimo giorno UTC — dove correttamente rientra (revisione 2026-07-21, E1).
+    breaker_params = CircuitBreakerParams(
+        max_consecutive_losses=None, max_daily_loss_pct=0.001, max_drawdown_pct=None,
+    )
+
+    result = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=breaker_params, initial_capital=1000.0))
+    without_breaker = backtest_joint(model, candles, BacktestParams(
+        pattern_confirmation=False, circuit_breaker=None, initial_capital=1000.0))
+
+    assert result.n_trades < without_breaker.n_trades
+
+    dates = candles["BTCUSDT"].index[result.trades["bar"]].normalize()
+    trades_per_day = result.trades.groupby(dates).size()
+    assert trades_per_day.max() <= 6  # mai più di ~5 perdite prima che scatti

@@ -9,7 +9,7 @@ from typing import Optional
 import redis
 import streamlit as st
 
-HEARTBEAT_SERVICES = ("engine", "inference", "sentiment")
+HEARTBEAT_SERVICES = ("engine", "inference", "sentiment", "carry", "liquidations")
 
 
 @st.cache_resource
@@ -51,6 +51,12 @@ def get_last_tick(service: str) -> Optional[str]:
 
 def get_trading_config() -> Optional[dict]:
     return get_json("trading_config")
+
+
+def get_circuit_breaker_status() -> Optional[dict]:
+    """Pubblicato dall'engine ogni 5s (_position_monitor). None se
+    l'engine non è mai partito col codice che lo pubblica."""
+    return get_json("circuit_breaker_status")
 
 
 def save_trading_config(config_dict: dict):
