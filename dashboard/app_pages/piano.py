@@ -51,6 +51,10 @@ st.subheader("Simulazione: 300 €/mese, dati reali")
 vwce = _serie("VWCE")
 spx = _serie("SPX")
 serie = {"VWCE (All-World, acc.)": vwce, "S&P 500 (indice prezzo)": spx}
+# freschezza esplicita (revisione branch 2026-07-21): un refresh fallito
+# lascerebbe i parquet fermi in silenzio — l'ultimo mese lo rende visibile
+st.caption(f"Serie aggiornate a: VWCE {vwce.index[-1]}, S&P {spx.index[-1]} "
+           "(riscaricate dal job mensile; un ritardo qui = refresh da controllare)")
 
 inizio_min = vwce.index[0]                       # VWCE esiste dal 2019-06
 anni = sorted({str(p.year) for p in vwce.index})

@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
+from loguru import logger
 
 _ROOT = Path(__file__).resolve().parents[2]
 CACHE = _ROOT / "data" / "invest"
@@ -115,6 +116,14 @@ def load_asset_monthly(name: str, in_eur: bool = True) -> pd.Series:
     if in_eur and name != "EURUSD" and name not in EUR_NATIVI:
         fx = load_asset_monthly("EURUSD", in_eur=False)
         comuni = s.index.intersection(fx.index)
+        # troncamento silenzioso (revisione branch 2026-07-21): se il cambio
+        # FRED è indietro rispetto ai prezzi asset, l'intersezione scarta i
+        # mesi recenti e la simulazione DCA finisce prima senza dirlo. Lo diciamo.
+        persi = s.index.difference(fx.index)
+        recenti_persi = [str(p) for p in persi if p > fx.index.max()]
+        if recenti_persi:
+            logger.warning(f"{name}: {len(recenti_persi)} mesi recenti scartati per "
+                           f"cambio EUR mancante ({recenti_persi[-3:]}) — riscarica EURUSD")
         s = s.loc[comuni] / fx.loc[comuni]      # da USD a EUR
     # la divisione fa perdere il nome alla serie, e a valle il concat per
     # colonna lo usa come chiave

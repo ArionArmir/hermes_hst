@@ -101,3 +101,38 @@ sopra) accettati con motivazione esplicita — sono limiti architetturali del
 paper trading su Redis+SQLite, non difetti aperti. La seconda tornata di fix
 del motore (E2, E5, E6, E7, E10, E11) è stata fatta il 2026-07-21 stesso, dopo
 la prima, con motore riavviato e verificato pulito. Suite: 369 verdi.
+
+## Passata sul branch (2026-07-21, sera) — codice di produzione mai setacciato
+
+Seconda revisione mirata (3 revisori) sul codice LIVE aggiunto sul branch e
+mai passato al bug-hunt: liquidazioni, eventi, carry, invest, holdout,
+watchdog. Escluso il cuore già rivisto due volte (engine/inference/sentiment)
+e il codice offline (research/training). ~20 finding, i 5 gravi verificati
+riga per riga. Corretti in due lotti:
+
+**Lotto gravi** (commit `c6680f8`): holdout `assert_research_allowed` che
+passava muto su una stringa; delisting cieco ai simboli concatenati
+(`TRXUSDT`); config-drift che non vedeva un campo assente (classe
+dell'incidente 2026-07-20); dedup Bybit che collassava eventi distinti
+(auto-censura di `quota_censura`); scrittura parquet atomica; `flush_e_batti`
+con try; tripwire con verifica di adiacenza dei mesi.
+
+**Lotto medi** (commit `f96c711`): cursori osservatore incrementali per id;
+delisting sull'intero universo W30; high-water mark funding = max
+fundingTime; `record_trial`/`open_seal` atomici; dedup eventi per (chiave,
+ora); `check_annunci` che non consuma la finestra su errore; `giorni_nel_mese`
+per giorni distinti.
+
+**Lotto bassi**: funding `limit` 120→1000 (copre 30g anche a funding 1h);
+warning sul troncamento della conversione EUR; indicatore di freschezza dei
+fondi nella pagina Piano.
+
+**Residui accettati (bassi, non difetti aperti)**:
+- **Cascate — buffer in RAM**: il rilevatore legge i parquet, ma gli ultimi
+  ~200 eventi / ~2 min sono ancora nel buffer del recorder → una cascata può
+  essere rilevata con un giro di ritardo. Inerente alla cadenza di flush;
+  esporre il buffer accoppierebbe i due servizi. Accettato.
+- **Regime — metodo del percentile**: `regime_mensile` confronta la MEDIA
+  mensile contro la distribuzione dei valori GIORNALIERI storici, comprimendo
+  la varianza. È un metodo DICHIARATO (descrittivo), non un bug; rivedibile se
+  genererà mesi di etichette attenuate, ma non lo si cambia a occhio.

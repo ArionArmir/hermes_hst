@@ -34,8 +34,12 @@ def _eventi_funding(simbolo: str, da: datetime) -> list[tuple[datetime, float]]:
     high-water mark al MAX fundingTime accreditato (revisione branch
     2026-07-21): fissarlo a un timestamp pre-fetch causava il doppio-accredito
     di un settlement avvenuto tra la cattura di `adesso` e la fetch."""
+    # limit 1000 (max Binance) invece di 120 (revisione branch 2026-07-21):
+    # 120 eventi = ~40 giorni a funding 8h ma solo ~5 a 1h → la media trailing
+    # 30g dei simboli a funding 1h/4h vedeva pochi giorni, e un downtime lungo
+    # sotto-contava gli accrediti persi.
     r = requests.get(f"{FAPI}/fapi/v1/fundingRate",
-                     params={"symbol": simbolo, "limit": 120}, timeout=10)
+                     params={"symbol": simbolo, "limit": 1000}, timeout=10)
     out = []
     for e in r.json():
         t = datetime.fromtimestamp(e["fundingTime"] / 1000, tz=timezone.utc)
