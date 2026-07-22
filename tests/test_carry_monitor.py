@@ -12,8 +12,23 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.research.carry_monitor import (annualizza_basis, annualizza_funding,
-                                        fascia_regime, scadenza_da_simbolo)
+import pandas as pd
+
+from src.research.carry_monitor import (_funding_mensile_annuo, annualizza_basis,
+                                        annualizza_funding, fascia_regime,
+                                        scadenza_da_simbolo)
+
+
+def test_funding_mensile_annuo_indipendente_dalla_cadenza():
+    # stesso tasso per-evento (0.01%) ma cadenze diverse: il funding orario
+    # PAGA 8x l'8h in un anno, quindi l'annualizzato deve differire di 8x.
+    # Il vecchio media×3×365 li dava uguali, sottostimando l'orario di ~8x.
+    idx8 = pd.date_range("2021-01-01", "2021-01-31 16:00", freq="8h")
+    idx1 = pd.date_range("2021-01-01", "2021-01-31 23:00", freq="1h")
+    a8 = _funding_mensile_annuo(pd.Series(0.0001, index=idx8)).iloc[0]
+    a1 = _funding_mensile_annuo(pd.Series(0.0001, index=idx1)).iloc[0]
+    assert a8 == pytest.approx(0.1095, rel=1e-3)   # 8h: 0.01% × 3×365
+    assert a1 == pytest.approx(0.876, rel=1e-3)    # 1h: 0.01% × 24×365 (8x)
 
 
 def test_annualizzazione_funding():

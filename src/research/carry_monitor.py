@@ -88,14 +88,31 @@ def funding_corrente(giorni: int = 30) -> dict | None:
             "positivi": int((serie > 0).sum()), "totale": len(serie)}
 
 
+def _funding_mensile_annuo(s: pd.Series) -> pd.Series:
+    """Funding annualizzato per mese da una serie di eventi indicizzata per
+    calc_time. eventi/anno dedotti dal passo mediano dei settlement DENTRO ogni
+    mese (8h/4h/1h, e cambi di intervallo di Binance nel tempo), non assunti a
+    3/giorno: un simbolo a funding orario veniva annualizzato ~8x troppo basso,
+    falsando la distribuzione storica. Su cadenza 8h coincide col vecchio
+    media × 3 × 365."""
+    s = s.sort_index()
+    out = {}
+    for mese, g in s.groupby(lambda t: t.to_period("M")):
+        passo = g.index.to_series().diff().median()
+        if pd.isna(passo) or passo.total_seconds() <= 0:
+            continue
+        out[mese] = g.mean() * (365 * 24 * 3600 / passo.total_seconds())
+    return pd.Series(out, dtype=float)
+
+
 def percentile_storico(mediana_corrente: float) -> float | None:
     """Dove sta il funding di oggi nella distribuzione mensile 2020-2026."""
     mensili = []
     for p in FUNDING_DIR.glob("*.parquet"):
         d = pd.read_parquet(p)
-        m = (d.set_index("calc_time")["last_funding_rate"]
-               .groupby(lambda t: t.to_period("M")).mean() * 3 * 365)
-        mensili.append(m)
+        m = _funding_mensile_annuo(d.set_index("calc_time")["last_funding_rate"])
+        if not m.empty:
+            mensili.append(m)
     if not mensili:
         return None
     per_mese = pd.concat(mensili, axis=1).median(axis=1).dropna()
