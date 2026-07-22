@@ -77,3 +77,18 @@ def test_stato_sopravvive_al_riavvio(stato):
     ricaricato = P.carica_stato()
     assert "X" in ricaricato["posizioni"]
     assert P.LEDGER.exists() and "apertura" in P.LEDGER.read_text()
+
+
+def test_ciclo_con_funding_non_solleva_nameerror(monkeypatch):
+    """Revisione branch (regressione): il ciclo emetteva len(rates) su una
+    variabile rinominata → NameError in crash-loop al primo funding."""
+    import src.carry.main as cm
+    from datetime import datetime, timezone
+    monkeypatch.setattr(cm, "_eventi_funding",
+                        lambda sym, da: [(datetime.now(timezone.utc), 0.0001)])
+    monkeypatch.setattr(cm, "serve_ribilanciamento", lambda *a, **k: False)
+    stato = {"posizioni": {"BTCUSDT": {"aperta": "2026-07-20T00:00:00+00:00",
+                                       "funding_incassato": 0.0, "notional": 100.0}},
+             "funding_totale": 0.0}
+    eventi = cm.ciclo(stato)                              # non deve sollevare
+    assert any(e["evento"] == "funding" and e["eventi"] == 1 for e in eventi)

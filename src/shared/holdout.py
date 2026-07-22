@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from loguru import logger
 from scipy import stats
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -133,7 +134,12 @@ def record_trial(ipotesi: str, config: dict, risultato: dict) -> None:
     with open(REGISTRY_PATH, "a") as f:
         f.write(json.dumps(riga, default=str) + "\n")
         f.flush()
-        os.fsync(f.fileno())
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            # alcuni filesystem di rete/drvfs sollevano su fsync: la write è
+            # già avvenuta (riga persistita), il durability-hint è best-effort
+            pass
 
 
 def count_trials(ipotesi: str | None = None) -> int:
@@ -148,8 +154,14 @@ def count_trials(ipotesi: str | None = None) -> int:
             try:
                 r = json.loads(riga)
             except json.JSONDecodeError:
-                # riga parziale da una write interrotta: non deve far crashare
-                # il conteggio (che invaliderebbe il DSR). La si salta.
+                # riga parziale da una write interrotta: la si CONTA e si
+                # avvisa (revisione branch, regressione della prima passata:
+                # SALTARLA sottostimava n_trials → DSR gonfiato, esattamente
+                # ciò che il modulo esiste per impedire). Sovrastimare n_trials
+                # è la direzione sicura: rende il DSR più conservativo, non meno.
+                logger.warning(f"registro esperimenti: riga illeggibile contata "
+                               f"come tentativo (conservativo per il DSR): {riga[:60]!r}")
+                n += 1
                 continue
             if ipotesi is None or r.get("ipotesi") == ipotesi:
                 n += 1
@@ -236,16 +248,19 @@ def open_seal(lotto: str, ipotesi: str, n_trials: int, motivazione: str,
         "tentativi_dichiarati": n_trials,
         "motivazione": motivazione,
     }
-    # il registro PRIMA del manifesto (revisione branch 2026-07-21): così un
-    # crash tra i due non lascia un lotto APERTO senza traccia nel registro.
-    record_trial("APERTURA_HOLDOUT", {"lotto": lotto, "ipotesi": ipotesi,
-                                      "n_trials": n_trials},
-                 {"motivazione": motivazione})
-    # scrittura atomica del manifesto sigillato (tmp + os.replace): un crash a
-    # metà non deve troncare lo stato di TUTTI i sigilli
+    # il MANIFESTO (fonte di verità dello stato) PRIMA del registro (revisione
+    # branch, regressione della prima passata: registro-prima creava una
+    # traccia FANTASMA e la doppia apertura se il manifesto non si scriveva).
+    # Scrittura atomica tmp+os.replace: il lotto risulta APERTO solo se la
+    # scrittura è arrivata in fondo. Un crash tra manifesto e registro lascia
+    # al più una voce di audit mancante — evento raro e supervisionato, e lo
+    # stato resta corretto (il retry è bloccato dallo stato APERTO).
     import os
     tmp = MANIFEST_PATH.with_suffix(".yaml.tmp")
     with open(tmp, "w") as f:
         yaml.safe_dump(man, f, sort_keys=False, allow_unicode=True)
     os.replace(tmp, MANIFEST_PATH)
+    record_trial("APERTURA_HOLDOUT", {"lotto": lotto, "ipotesi": ipotesi,
+                                      "n_trials": n_trials},
+                 {"motivazione": motivazione})
     return dati

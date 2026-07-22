@@ -105,12 +105,13 @@ def _evento(tipo: str, severita: str, titolo: str, dettaglio: str = "",
 
 
 def _impronta_dedup(e: dict) -> tuple:
-    # dedup per chiave + ORA (revisione branch 2026-07-21): la granularità
-    # giornaliera perdeva le ricorrenze legittime — allarme config drift alle
-    # 10:00, rientro alle 11:00, NUOVA deriva alle 15:00 avevano stessa chiave
-    # e stesso giorno, e la terza spariva dal feed. L'ora distingue le
-    # occorrenze reali tenendo la rete anti-duplicato entro l'ora.
-    return (e["chiave"], e["ts"][:13])
+    # granularità per SEVERITÀ (revisione branch, regressione della prima
+    # passata): allarme/nota per ORA (le ricorrenze legittime — config drift,
+    # cascata — devono restare visibili); info per GIORNO (i segnali scartati
+    # ad alta frequenza condividono la chiave e con la granularità oraria
+    # inondavano il feed 24×, seppellendo gli allarmi nella finestra di 15).
+    granularita = 13 if e.get("severita") in ("allarme", "nota") else 10
+    return (e["chiave"], e["ts"][:granularita])
 
 
 def registra_eventi(eventi: list[dict], path: Path = PATH_EVENTI) -> int:

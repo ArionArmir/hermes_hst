@@ -57,3 +57,33 @@ def test_bybit_non_deduplica_eventi_simultanei_distinti(tmp_path):
         b.flush()
     df = pd.read_parquet(next(tmp_path.glob("*.parquet")))
     assert len(df) == 2                                    # entrambi conservati
+
+
+def test_flush_fallito_non_duplica_gruppo_scritto(tmp_path, monkeypatch):
+    """Revisione branch (regressione): con dedup=False, un flush che fallisce
+    sul 2° day-group non deve riscrivere (duplicare) il 1° al retry."""
+    import pandas as pd
+    from datetime import datetime, timezone
+    def riga(ts):
+        return {"ts": ts, "symbol": "X", "side": "Sell", "qty": 1.0,
+                "prezzo_medio": 1.0, "notional_usdt": 1.0}
+    b = BufferGiornaliero(out_dir=tmp_path, dedup=False)
+    b.righe = [riga(datetime(2026, 7, 20, 23, 59, tzinfo=timezone.utc)),
+               riga(datetime(2026, 7, 21, 0, 1, tzinfo=timezone.utc))]
+    orig = pd.DataFrame.to_parquet
+    calls = {"n": 0}
+    def flaky(self, path, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disco pieno")
+        return orig(self, path, *a, **k)
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", flaky)
+    try:
+        b.flush()
+    except OSError:
+        pass
+    assert len(b.righe) == 1                              # solo il gruppo fallito resta
+    assert not list(tmp_path.glob("*.tmp"))               # niente .tmp orfano
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", orig)
+    b.flush()
+    assert len(pd.read_parquet(tmp_path / "2026-07-20.parquet")) == 1   # NO duplicato

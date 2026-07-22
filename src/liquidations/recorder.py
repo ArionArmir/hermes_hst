@@ -74,20 +74,35 @@ class BufferGiornaliero:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         df = pd.DataFrame(self.righe)[CAMPI]
         scritte = 0
+        non_scritte: list[dict] = []      # gruppi falliti: restano per il retry
+        errore = None
         for giorno, gruppo in df.groupby(df["ts"].dt.date):
             path = self.out_dir / f"{giorno}.parquet"
-            if path.exists():
-                gruppo = pd.concat([pd.read_parquet(path), gruppo])
-                if self.dedup:
-                    gruppo = gruppo.drop_duplicates(subset=["ts", "symbol", "qty"])
-                gruppo = gruppo.sort_values("ts")
-            # scrittura atomica (revisione branch 2026-07-21): tmp + os.replace,
-            # o un crash a metà to_parquet troncherebbe l'INTERA giornata (il
-            # flush riscrive tutto il file) e ogni read successiva esploderebbe.
             tmp = path.with_suffix(".parquet.tmp")
-            gruppo.reset_index(drop=True).to_parquet(tmp)
-            os.replace(tmp, path)
-            scritte += len(gruppo)
-        n = len(self.righe)
-        self.righe = []
+            try:
+                da_scrivere = gruppo
+                if path.exists():
+                    da_scrivere = pd.concat([pd.read_parquet(path), gruppo])
+                    if self.dedup:
+                        da_scrivere = da_scrivere.drop_duplicates(subset=["ts", "symbol", "qty"])
+                    da_scrivere = da_scrivere.sort_values("ts")
+                # scrittura atomica: tmp + os.replace, o un crash a metà
+                # to_parquet troncherebbe l'INTERA giornata (il flush riscrive
+                # tutto il file) e ogni read successiva esploderebbe.
+                da_scrivere.reset_index(drop=True).to_parquet(tmp)
+                os.replace(tmp, path)
+                scritte += len(gruppo)
+            except Exception as e:
+                # revisione branch, regressione della prima passata: senza
+                # svuotamento incrementale, un gruppo fallito lasciava TUTTE le
+                # righe nel buffer → al retry il gruppo GIÀ scritto veniva
+                # riscritto, e con dedup=False (Bybit) si duplicava in silenzio.
+                # I gruppi già scritti NON tornano nel buffer; solo i falliti sì.
+                tmp.unlink(missing_ok=True)           # niente .tmp orfano
+                non_scritte.extend(gruppo.to_dict("records"))
+                errore = e
+        n = len(self.righe) - len(non_scritte)
+        self.righe = non_scritte
+        if errore is not None:
+            raise errore                              # il chiamante logga e ritenta
         return n

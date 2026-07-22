@@ -230,3 +230,17 @@ def test_check_annunci_non_consuma_finestra_su_errore(monkeypatch):
     with pytest.raises(Exception):
         ann.check_annunci(cursori)
     assert "annunci_ultimo_check" not in cursori           # cursore NON avanzato
+
+
+def test_dedup_per_severita_info_giornaliero_allarme_orario(tmp_path):
+    """Revisione branch (regressione): la dedup oraria uniforme inondava il
+    feed di info ad alta frequenza. Ora info=giorno (no flood),
+    allarme/nota=ora (ricorrenze visibili)."""
+    from src.eventi.osservatore import registra_eventi, _evento
+    path = tmp_path / "eventi.jsonl"
+    i1 = _evento("filtro_segnale", "info", "Segnale BTC scartato"); i1["ts"] = "2026-07-21T10:00:00"; i1["chiave"] = "f:btc"
+    i2 = dict(i1); i2["ts"] = "2026-07-21T14:00:00"
+    assert registra_eventi([i1], path) + registra_eventi([i2], path) == 1   # info: 1/giorno
+    a1 = _evento("deriva", "allarme", "drift"); a1["ts"] = "2026-07-21T10:00:00"; a1["chiave"] = "d:x"
+    a2 = dict(a1); a2["ts"] = "2026-07-21T15:00:00"
+    assert registra_eventi([a1], path) + registra_eventi([a2], path) == 2   # allarme: per ora

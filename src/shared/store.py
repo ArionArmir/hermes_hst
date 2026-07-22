@@ -153,12 +153,20 @@ def read_signals(limit: int = 200, db_path: Optional[Path] = None) -> pd.DataFra
     return _read_sql("SELECT * FROM signals ORDER BY timestamp DESC LIMIT ?", limit, db_path)
 
 
+_TABELLE_INCREMENTALI = {"signals", "trades"}
+
+
 def _read_since(tabella: str, cursor_id: int, limit: int,
                 db_path: Optional[Path]) -> pd.DataFrame:
     """Righe con id > cursor_id, in ordine CRESCENTE (revisione branch
     2026-07-21): l'osservatore eventi deve avanzare contiguo dal cursore, non
     prendere le N più recenti — o un arretrato > limit salterebbe gli eventi
     più vecchi per sempre. Ordine crescente = al più si resta indietro, mai si salta."""
+    # allow-list del nome tabella (interpolato in f-string): oggi solo chiamanti
+    # interni con valori letterali, ma la guardia impedisce che una futura
+    # chiamata con input variabile diventi iniettabile (revisione branch).
+    if tabella not in _TABELLE_INCREMENTALI:
+        raise ValueError(f"tabella non consentita: {tabella!r}")
     with _connect(db_path) as conn:
         with pd.option_context("mode.string_storage", "python"):
             return pd.read_sql_query(

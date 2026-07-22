@@ -80,7 +80,7 @@ def ciclo(stato: dict) -> list[dict]:
         incasso = accredita_funding(stato, sym, eventi_f)
         if incasso:
             eventi.append({"evento": "funding", "simbolo": sym,
-                           "eventi": len(rates), "usdt": round(incasso, 6)})
+                           "eventi": len(eventi_f), "usdt": round(incasso, 6)})
 
     # 2) ribilanciamento settimanale (lunedì 00 UTC)
     if serve_ribilanciamento(stato.get("ultimo_ribilanciamento"), adesso):
