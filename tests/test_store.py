@@ -156,3 +156,17 @@ def test_count_signals_conta_senza_leggere_tutto(monkeypatch, tmp_path):
 def test_count_signals_db_vuoto(monkeypatch, tmp_path):
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "vuoto.db")
     assert store.count_signals() == 0 and store.count_signals("OPENED") == 0
+
+
+def test_read_signals_since_avanza_contiguo(monkeypatch, tmp_path):
+    """Revisione branch 2026-07-21: l'osservatore deve avanzare per id
+    crescente dal cursore, non prendere le N più recenti (che salterebbero
+    un arretrato oltre il limite)."""
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
+    for i in range(5):
+        store.insert_signal(symbol="BTCUSDT", action="buy", outcome="OPENED", confidence=0.9)
+    primi = store.read_signals_since(0, limit=3)
+    assert list(primi["id"]) == [1, 2, 3]                  # i più VECCHI, in ordine
+    dopo = store.read_signals_since(3)
+    assert list(dopo["id"]) == [4, 5]                      # continua dal cursore
+    assert store.read_trades_since(0).empty                # tabella trades vuota

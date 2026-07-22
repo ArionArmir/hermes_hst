@@ -73,8 +73,13 @@ def regime_mensile(daily: pd.DataFrame, mese: str) -> dict | None:
     mediana = float(pd.Series(percentili).median())
     fascia = ("ELEVATO" if mediana >= FASCIA_ALTA else
               "BASSO" if mediana <= FASCIA_BASSA else "NELLA NORMA")
+    # giorni distinti del mese (revisione branch 2026-07-21): il vecchio
+    # calcolo divideva le righe del mese per i simboli di TUTTO lo storico,
+    # inclusi i delisted assenti nel mese → il conteggio si dimezzava col
+    # tempo. I giorni-calendario distinti sono la misura corretta.
+    giorni = int(df.loc[df["mese"] == mese, "t"].dt.normalize().nunique())
     return {"percentili": percentili, "mediana": mediana, "fascia": fascia,
-            "giorni_nel_mese": int((df["mese"] == mese).sum() / max(df["symbol"].nunique(), 1))}
+            "giorni_nel_mese": giorni}
 
 
 def carica_daily() -> pd.DataFrame | None:

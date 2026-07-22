@@ -125,8 +125,15 @@ def record_trial(ipotesi: str, config: dict, risultato: dict) -> None:
         "config": config,
         "risultato": risultato,
     }
+    # append + flush + fsync (revisione branch 2026-07-21): il registro
+    # determina n_trials del Deflated Sharpe — un tentativo perso per un crash
+    # prima del flush gonfierebbe la significatività (dichiarare 1 invece di 41
+    # porta il DSR dal 21% al 97%). La riga è scritta in un'unica write.
+    import os
     with open(REGISTRY_PATH, "a") as f:
         f.write(json.dumps(riga, default=str) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def count_trials(ipotesi: str | None = None) -> int:
@@ -138,7 +145,13 @@ def count_trials(ipotesi: str | None = None) -> int:
         for riga in f:
             if not riga.strip():
                 continue
-            if ipotesi is None or json.loads(riga).get("ipotesi") == ipotesi:
+            try:
+                r = json.loads(riga)
+            except json.JSONDecodeError:
+                # riga parziale da una write interrotta: non deve far crashare
+                # il conteggio (che invaliderebbe il DSR). La si salta.
+                continue
+            if ipotesi is None or r.get("ipotesi") == ipotesi:
                 n += 1
     return n
 
@@ -223,9 +236,16 @@ def open_seal(lotto: str, ipotesi: str, n_trials: int, motivazione: str,
         "tentativi_dichiarati": n_trials,
         "motivazione": motivazione,
     }
-    with open(MANIFEST_PATH, "w") as f:
-        yaml.safe_dump(man, f, sort_keys=False, allow_unicode=True)
+    # il registro PRIMA del manifesto (revisione branch 2026-07-21): così un
+    # crash tra i due non lascia un lotto APERTO senza traccia nel registro.
     record_trial("APERTURA_HOLDOUT", {"lotto": lotto, "ipotesi": ipotesi,
                                       "n_trials": n_trials},
                  {"motivazione": motivazione})
+    # scrittura atomica del manifesto sigillato (tmp + os.replace): un crash a
+    # metà non deve troncare lo stato di TUTTI i sigilli
+    import os
+    tmp = MANIFEST_PATH.with_suffix(".yaml.tmp")
+    with open(tmp, "w") as f:
+        yaml.safe_dump(man, f, sort_keys=False, allow_unicode=True)
+    os.replace(tmp, MANIFEST_PATH)
     return dati

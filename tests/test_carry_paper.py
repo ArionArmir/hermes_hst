@@ -52,7 +52,9 @@ def test_ciclo_completo_stessa_contabilita_del_backtest(stato):
     """Apri con basis 0.002, incassa 3 funding da 0.0001, chiudi a basis 0:
     PnL = funding + Δbasis − costi, identico a pnl_chiusura del backtest."""
     P.apri_posizione(stato, "X", 0.002, _t("2026-07-13T00:00"))
-    P.accredita_funding(stato, "X", [0.0001] * 3, _t("2026-07-14T00:00"))
+    P.accredita_funding(stato, "X", [(_t("2026-07-13T08:00"), 0.0001),
+                                     (_t("2026-07-13T16:00"), 0.0001),
+                                     (_t("2026-07-14T00:00"), 0.0001)])
     ev = P.chiudi_posizione(stato, "X", 0.0)
     atteso = (3 * 0.0001 * P.NOTIONAL + 0.002 * P.NOTIONAL
               - (COSTO_APERTURA + COSTO_CHIUSURA) * P.NOTIONAL)
@@ -63,8 +65,10 @@ def test_ciclo_completo_stessa_contabilita_del_backtest(stato):
 
 def test_funding_negativo_e_un_pagamento(stato):
     P.apri_posizione(stato, "X", 0.0, _t("2026-07-13T00:00"))
-    P.accredita_funding(stato, "X", [-0.0002], _t("2026-07-13T08:00"))
+    P.accredita_funding(stato, "X", [(_t("2026-07-13T08:00"), -0.0002)])
     assert stato["posizioni"]["X"]["funding_incassato"] < 0
+    # il high-water mark è il max fundingTime accreditato, non un pre-fetch
+    assert stato["posizioni"]["X"]["ultimo_accredito"] == _t("2026-07-13T08:00").isoformat()
 
 
 def test_stato_sopravvive_al_riavvio(stato):

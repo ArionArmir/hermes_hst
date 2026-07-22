@@ -29,17 +29,25 @@ def _universo() -> list[str]:
     return sorted(p.name.split("_funding")[0] for p in FUNDING_DIR.glob("*.parquet"))
 
 
-def _eventi_funding(simbolo: str, da: datetime) -> list[float]:
+def _eventi_funding(simbolo: str, da: datetime) -> list[tuple[datetime, float]]:
+    """(fundingTime, rate) degli eventi dopo `da`. Il tempo serve a fissare il
+    high-water mark al MAX fundingTime accreditato (revisione branch
+    2026-07-21): fissarlo a un timestamp pre-fetch causava il doppio-accredito
+    di un settlement avvenuto tra la cattura di `adesso` e la fetch."""
     r = requests.get(f"{FAPI}/fapi/v1/fundingRate",
                      params={"symbol": simbolo, "limit": 120}, timeout=10)
-    return [float(e["fundingRate"]) for e in r.json()
-            if datetime.fromtimestamp(e["fundingTime"] / 1000, tz=timezone.utc) > da]
+    out = []
+    for e in r.json():
+        t = datetime.fromtimestamp(e["fundingTime"] / 1000, tz=timezone.utc)
+        if t > da:
+            out.append((t, float(e["fundingRate"])))
+    return out
 
 
 def _media_trailing_30g(simbolo: str) -> float | None:
     da = datetime.now(timezone.utc) - timedelta(days=30)
-    eventi = _eventi_funding(simbolo, da)
-    return sum(eventi) / len(eventi) if eventi else None
+    rates = [r for _, r in _eventi_funding(simbolo, da)]
+    return sum(rates) / len(rates) if rates else None
 
 
 def _basis(simbolo: str) -> float | None:
@@ -62,10 +70,10 @@ def ciclo(stato: dict) -> list[dict]:
         pos = stato["posizioni"][sym]
         da = datetime.fromisoformat(pos.get("ultimo_accredito", pos["aperta"]))
         try:
-            rates = _eventi_funding(sym, da)
+            eventi_f = _eventi_funding(sym, da)
         except Exception:
             continue
-        incasso = accredita_funding(stato, sym, rates, adesso)
+        incasso = accredita_funding(stato, sym, eventi_f)
         if incasso:
             eventi.append({"evento": "funding", "simbolo": sym,
                            "eventi": len(rates), "usdt": round(incasso, 6)})

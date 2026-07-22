@@ -97,16 +97,25 @@ def evento_depeg(prezzo: float, adesso: datetime,
 
 
 def universi_correnti() -> dict:
-    """I simboli da proteggere: i 7 del manifest e le posizioni carry."""
+    """I simboli da proteggere: i 7 del manifest e l'INTERO universo carry
+    (i candidati W30), non solo le posizioni aperte (revisione branch
+    2026-07-21: un candidato non ancora detenuto che viene delistato
+    sfuggiva, e al ribilanciamento successivo si rischiava di selezionarlo)."""
     import yaml
+    from src.research.carry_monitor import FUNDING_DIR
     universi = {}
     manifest = _ROOT / "config" / "forward_manifest.yaml"
     if manifest.exists():
         simboli = yaml.safe_load(manifest.read_text())["config"].get("symbols", [])
         universi["motore"] = {s.upper() for s in simboli}
+    # universo carry = candidati W30, derivati dai parquet funding (come il
+    # servizio carry) + posizioni aperte come rete di sicurezza
+    carry = {p.name.split("_funding")[0] for p in FUNDING_DIR.glob("*.parquet")}
     stato_carry = _ROOT / "data" / "carry_paper" / "state.json"
     if stato_carry.exists():
-        universi["carry"] = set(json.loads(stato_carry.read_text())["posizioni"])
+        carry |= set(json.loads(stato_carry.read_text())["posizioni"])
+    if carry:
+        universi["carry"] = carry
     return universi
 
 
@@ -119,13 +128,16 @@ def check_annunci(cursori: dict) -> list[dict]:
     ultimo = cursori.get("annunci_ultimo_check")
     if ultimo and (adesso - datetime.fromisoformat(ultimo)).total_seconds() < INTERVALLO_ANNUNCI_MIN * 60:
         return []
-    cursori["annunci_ultimo_check"] = adesso.isoformat()
 
     r = requests.get(LISTA_ANNUNCI, params={"type": 1, "catalogId": CATALOGO_DELISTING,
                                             "pageNo": 1, "pageSize": 10},
                      headers=_H, timeout=15)
     r.raise_for_status()
     articoli = r.json()["data"]["catalogs"][0]["articles"]
+    # cursore avanzato SOLO dopo il fetch riuscito (revisione branch 2026-07-21):
+    # un errore di rete non deve consumare la finestra di 30 min lasciando il
+    # controllo delisting cieco fino al prossimo intervallo
+    cursori["annunci_ultimo_check"] = adesso.isoformat()
     visti = cursori.get("annunci_visti", [])
     corpi = {}
     for art in articoli:

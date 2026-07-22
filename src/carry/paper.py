@@ -66,15 +66,20 @@ def chiudi_posizione(stato: dict, simbolo: str, basis_uscita: float) -> dict:
             "basis_uscita": round(basis_uscita, 6), "pnl": round(pnl, 6)}
 
 
-def accredita_funding(stato: dict, simbolo: str, rates: list[float],
-                      fino_a: datetime) -> float:
-    """Somma dei rate (lo short li riceve) sul notional, in USDT di carta."""
-    if simbolo not in stato["posizioni"] or not rates:
+def accredita_funding(stato: dict, simbolo: str,
+                      eventi_funding: list[tuple[datetime, float]]) -> float:
+    """Somma dei rate (lo short li riceve) sul notional, in USDT di carta.
+    eventi_funding = lista di (fundingTime, rate). Il high-water mark
+    `ultimo_accredito` viene fissato al MAX fundingTime accreditato
+    (revisione branch 2026-07-21): fissarlo a un timestamp pre-fetch
+    riaccreditava al ciclo dopo un settlement avvenuto tra cattura e fetch."""
+    if simbolo not in stato["posizioni"] or not eventi_funding:
         return 0.0
-    incasso = sum(rates) * NOTIONAL
+    incasso = sum(r for _, r in eventi_funding) * NOTIONAL
+    mark = max(t for t, _ in eventi_funding)
     pos = stato["posizioni"][simbolo]
     pos["funding_incassato"] = round(pos["funding_incassato"] + incasso, 6)
-    pos["ultimo_accredito"] = fino_a.isoformat()
+    pos["ultimo_accredito"] = mark.isoformat()
     stato["funding_totale"] = round(stato.get("funding_totale", 0.0) + incasso, 6)
     return incasso
 

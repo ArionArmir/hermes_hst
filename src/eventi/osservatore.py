@@ -104,25 +104,33 @@ def _evento(tipo: str, severita: str, titolo: str, dettaglio: str = "",
             "chiave": f"{tipo}:{titolo}"}
 
 
+def _impronta_dedup(e: dict) -> tuple:
+    # dedup per chiave + ORA (revisione branch 2026-07-21): la granularità
+    # giornaliera perdeva le ricorrenze legittime — allarme config drift alle
+    # 10:00, rientro alle 11:00, NUOVA deriva alle 15:00 avevano stessa chiave
+    # e stesso giorno, e la terza spariva dal feed. L'ora distingue le
+    # occorrenze reali tenendo la rete anti-duplicato entro l'ora.
+    return (e["chiave"], e["ts"][:13])
+
+
 def registra_eventi(eventi: list[dict], path: Path = PATH_EVENTI) -> int:
-    """Append con dedup per chiave sullo stesso giorno (le transizioni
-    watchdog non hanno un cursore naturale). Ritorna quanti scritti."""
+    """Append con dedup per (chiave, ora). Ritorna quanti scritti."""
     path.parent.mkdir(parents=True, exist_ok=True)
     recenti = set()
     if path.exists():
-        for riga in path.read_text().splitlines()[-300:]:
+        for riga in path.read_text().splitlines()[-1000:]:
             try:
-                e = json.loads(riga)
-                recenti.add((e["chiave"], e["ts"][:10]))
+                recenti.add(_impronta_dedup(json.loads(riga)))
             except (json.JSONDecodeError, KeyError):
                 continue
     scritti = 0
     with open(path, "a") as f:
         for e in eventi:
-            if (e["chiave"], e["ts"][:10]) in recenti:
+            imp = _impronta_dedup(e)
+            if imp in recenti:
                 continue
             f.write(json.dumps(e) + "\n")
-            recenti.add((e["chiave"], e["ts"][:10]))
+            recenti.add(imp)
             scritti += 1
     return scritti
 
@@ -154,10 +162,14 @@ def osserva_tutto(nuovi_allarmi: dict | None = None,
         cursori = json.loads(PATH_CURSORI.read_text())
 
     eventi = []
-    segnali = store.read_signals(limit=10_000)
-    da_signals, cursori["signals"] = nuovi_da_signals(segnali, cursori.get("signals", 0))
-    trades = store.read_trades(limit=10_000)
-    da_trades, cursori["trades"] = nuovi_da_trades(trades, cursori.get("trades", 0))
+    # letture incrementali per id crescente dal cursore (revisione branch
+    # 2026-07-21): avanzano contigue, non saltano un arretrato oltre il limite
+    cur_sig = cursori.get("signals", 0)
+    segnali = store.read_signals_since(cur_sig)
+    da_signals, cursori["signals"] = nuovi_da_signals(segnali, cur_sig)
+    cur_tr = cursori.get("trades", 0)
+    trades = store.read_trades_since(cur_tr)
+    da_trades, cursori["trades"] = nuovi_da_trades(trades, cur_tr)
     righe_ledger = (LEDGER_CARRY.read_text().splitlines()
                     if LEDGER_CARRY.exists() else [])
     da_ledger, cursori["ledger"] = nuovi_da_ledger(righe_ledger, cursori.get("ledger", 0))

@@ -175,3 +175,17 @@ def test_assert_research_allowed_stringa_blocca(monkeypatch):
     with pytest.raises(holdout.HoldoutViolation):
         holdout.assert_research_allowed(["BCHUSDT"])        # lista: bloccata come sempre
     holdout.assert_research_allowed(["BTCUSDT"])            # non sigillato: passa
+
+
+def test_count_trials_ignora_riga_parziale(monkeypatch, tmp_path):
+    """Revisione branch 2026-07-21: una riga JSON troncata (write interrotta)
+    non deve far crashare count_trials — invaliderebbe il DSR."""
+    import json
+    from src.shared import holdout
+    reg = tmp_path / "registry.jsonl"
+    reg.write_text(json.dumps({"ipotesi": "A"}) + "\n"
+                   + json.dumps({"ipotesi": "A"}) + "\n"
+                   + '{"ipotesi": "A", "conf')           # riga parziale
+    monkeypatch.setattr(holdout, "REGISTRY_PATH", reg)
+    assert holdout.count_trials() == 2                    # le 2 valide, non crasha
+    assert holdout.count_trials("A") == 2

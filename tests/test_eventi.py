@@ -202,3 +202,31 @@ def test_delisting_matcha_simboli_concatenati():
     articoli = [{"code": "z", "title": "Binance Futures Will Delist TRXUSDT Perpetual"}]
     eventi, _ = eventi_da_annunci(articoli, {"z": ""}, {"motore": {"TRXUSDT", "BTCUSDT"}}, [])
     assert eventi[0]["severita"] == "allarme" and "TRXUSDT" in eventi[0]["dettaglio"]
+
+
+def test_dedup_ora_granulare_tiene_ricorrenze(tmp_path):
+    """Revisione branch 2026-07-21: allarme@10 + riallarme@15 lo stesso giorno
+    non devono collassare (il flapping deve restare visibile), ma un duplicato
+    nella STESSA ora sì."""
+    from src.eventi.osservatore import registra_eventi, _evento
+    path = tmp_path / "eventi.jsonl"
+    a = _evento("deriva", "allarme", "Allarme: config drift"); a["ts"] = "2026-07-21T10:05:00"
+    b = dict(a); b["ts"] = "2026-07-21T15:00:00"            # 5 ore dopo
+    c = dict(a); c["ts"] = "2026-07-21T10:50:00"            # stessa ora del primo
+    assert registra_eventi([a], path) == 1
+    assert registra_eventi([b], path) == 1                 # ora diversa: tenuto
+    assert registra_eventi([c], path) == 0                 # stessa ora: dedup
+
+
+def test_check_annunci_non_consuma_finestra_su_errore(monkeypatch):
+    """Revisione branch 2026-07-21: un errore di rete non deve consumare la
+    finestra di 30 min lasciando cieco il controllo delisting."""
+    import src.eventi.annunci as ann
+    def boom(*a, **k):
+        raise ann.requests.exceptions.ConnectionError("giù")
+    monkeypatch.setattr(ann.requests, "get", boom)
+    cursori = {}
+    import pytest
+    with pytest.raises(Exception):
+        ann.check_annunci(cursori)
+    assert "annunci_ultimo_check" not in cursori           # cursore NON avanzato
