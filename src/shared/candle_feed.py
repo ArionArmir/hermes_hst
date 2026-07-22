@@ -101,7 +101,9 @@ class CandleFeed:
                 ) as resp:
                     raw = await resp.json()
         except Exception as e:
-            logger.error(f"❌ Errore fetch candele {symbol}: {e}")
+            # type(e).__name__ perché lo str di TimeoutError/ConnectionError è
+            # spesso vuoto: senza, "Errore fetch candele TRXUSDT:" non dice quale
+            logger.error(f"❌ Errore fetch candele {symbol}: {type(e).__name__}: {e}")
             return self._serve_cache_or_none(symbol, cached)
 
         if not isinstance(raw, list) or len(raw) < 2:
