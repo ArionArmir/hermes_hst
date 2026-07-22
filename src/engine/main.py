@@ -40,6 +40,11 @@ class TradingEngine:
 
         self.positions: Dict[str, Position] = {}
         self.latest_prices: Dict[str, float] = {}
+        # Età dell'ultimo tick per simbolo: oltre prezzo_max_eta_sec il prezzo è
+        # "morto" (stream silente ma TCP vivo, nessun reconnect) e il backstop
+        # SL/TP deve ripiegare sul REST invece di usare un prezzo congelato.
+        self.latest_price_ts: Dict[str, datetime] = {}
+        self.prezzo_max_eta_sec = 60
         self._richiedi_riconnessione_ws = False   # E10: cambio timeframe → riconnetti
         # Ultima chiusura per simbolo (solo in memoria: dopo un riavvio il
         # cooldown di ri-ingresso riparte pulito, scelta accettabile)
@@ -135,10 +140,19 @@ class TradingEngine:
                         logger.info("✅ Configurazione caricata da YAML")
                 except Exception as e:
                     logger.warning(f"⚠️ Config YAML non trovato: {e}")
-                    self._apply_config(Config())
+                    if self.config is None:
+                        self._apply_config(Config())
         except Exception as e:
-            logger.error(f"❌ Errore caricamento config: {e}")
-            self._apply_config(Config())
+            # revisione 2026-07-22: MAI regredire ai default hardcoded (leva 3,
+            # soglia 0.55, 3 simboli) sovrascrivendo una config buona già in
+            # memoria. Un hiccup di Redis durante un reload (config_updated /
+            # _resync_dopo_subscribe) replicherebbe la deriva soglia sul MOTORE
+            # live — stesso fix I2 già in src/inference/main.py, qui mancante.
+            logger.error(f"❌ Errore caricamento config: {e}"
+                         + (" — tengo la config corrente" if self.config else
+                            " — nessuna config precedente, uso i default"))
+            if self.config is None:
+                self._apply_config(Config())
 
     def _apply_config(self, config: Config):
         self.leverage = config.leverage
@@ -404,6 +418,7 @@ class TradingEngine:
 
                                 exit_model = self.exit_models.get(symbol)
                                 self.latest_prices[symbol] = price
+                                self.latest_price_ts[symbol] = datetime.now(timezone.utc)
                                 if self._tick_throttle.ready(f"latest_price_{symbol}"):
                                     await self.redis.set(f"latest_price_{symbol}", str(price))
                                 if self._tick_throttle.ready("last_tick_engine"):
@@ -707,7 +722,12 @@ class TradingEngine:
                 # al prezzo di entrata, nascondendo la perdita. Se il prezzo di
                 # tick è stantio, lo prendiamo via REST.
                 prezzo_uscita = self.latest_prices.get(symbol)
-                if prezzo_uscita is None:
+                eta_prezzo = self.latest_price_ts.get(symbol)
+                prezzo_stantio = (
+                    eta_prezzo is None
+                    or (now - eta_prezzo).total_seconds() > self.prezzo_max_eta_sec
+                )
+                if prezzo_uscita is None or prezzo_stantio:
                     prezzo_uscita = await self._get_price_rest(symbol)
                 if prezzo_uscita and prezzo_uscita > 0:
                     # revisione 2026-07-21 (E6): trailing statico REALE. Il

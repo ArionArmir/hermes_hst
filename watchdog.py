@@ -267,9 +267,22 @@ def main() -> int:
     values = dict(zip(keys, client.mget(keys)))
     problems = evaluate_checks(values, now)
     problems["ollama"] = check_ollama()
-    problems["modello"] = check_model_health(client)
-    problems["config drift"] = check_config_drift(client)
-    problems["valutazioni ml"] = check_inference_fresca(client)
+
+    # Il watchdog è l'ultima linea di difesa: un sotto-check che ESPLODE (es.
+    # trading_config corrotto in Redis → json.loads che solleva, o una chiave
+    # mancante nel manifest) non deve zittire TUTTI gli allarmi facendo crashare
+    # main() prima di split_transitions/notify. Isoliamo ognuno: se fallisce, il
+    # guasto del check diventa esso stesso un problema segnalato.
+    def _check_isolato(nome, fn):
+        try:
+            return fn()
+        except Exception as e:
+            print(f"[watchdog] sotto-check '{nome}' fallito: {e}")
+            return f"check non eseguibile: {e}"
+
+    problems["modello"] = _check_isolato("modello", lambda: check_model_health(client))
+    problems["config drift"] = _check_isolato("config drift", lambda: check_config_drift(client))
+    problems["valutazioni ml"] = _check_isolato("valutazioni ml", lambda: check_inference_fresca(client))
     previously_alerted = set(client.smembers(ALERT_STATE_KEY))
     new_alerts, recovered = split_transitions(previously_alerted, problems)
 

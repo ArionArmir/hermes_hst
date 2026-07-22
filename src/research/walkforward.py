@@ -106,6 +106,9 @@ def _run_inner(spec, q, raw, bounds, cfg, feature_fn, fit_model):
             circuit_breaker=CircuitBreakerParams.from_config(cfg),
             atr_multiplier_sl=3.0, atr_multiplier_tp=3.0,
             max_holding_bars=spec.horizon,
+            # tc = warmup (ultime MIN_CANDLES barre di TRAIN) + test: nessun
+            # segnale deve nascere dal warmup, o si conta PnL in-sample nel fold.
+            trade_start_ts=tr_end,
         )
         r = backtest_joint(model, tc, params)
         if r is None:

@@ -80,6 +80,12 @@ class BacktestParams:
     # è così che tune_strategy.py isola l'effetto di soglia/ATR da quello del
     # breaker, e come si misura il "senza breaker" per confronto.
     circuit_breaker: Optional[CircuitBreakerParams] = None
+    # Walk-forward (solo backtest_joint): timestamp che separa il warmup dal
+    # test. Le barre con index <= trade_start_ts servono solo a scaldare le
+    # feature (rolling window) ma sono barre di TRAINING; generare segnali lì
+    # aprirebbe trade IN-SAMPLE il cui PnL contaminerebbe il fold. None = nessun
+    # gate (comportamento invariato per tutti gli altri chiamanti).
+    trade_start_ts: Optional[pd.Timestamp] = None
 
 
 @dataclass
@@ -470,13 +476,21 @@ def backtest_joint(model, candles_by_symbol: Dict[str, pd.DataFrame],
             position.stop_loss = exit_models[sym].update_trailing_stop(
                 bar_by_symbol[sym]["close"], position)
 
-        # 5. Nuovi segnali dalla candela appena chiusa → eseguiranno alla prossima
-        for sym, proba in proba_by_symbol.items():
-            if not np.isnan(proba[i][0]):
-                action, _ = signal_from_proba(proba[i][TARGET_DOWN], proba[i][TARGET_UP],
-                                              threshold=params.prob_threshold)
-                if action != "hold":
-                    pending_actions[sym] = action
+        # 5. Nuovi segnali dalla candela appena chiusa → eseguiranno alla
+        #    prossima. Nel walk-forward le barre di WARMUP (index <=
+        #    trade_start_ts) sono barre di TRAINING su cui il modello è stato
+        #    fittato: generare segnali lì aprirebbe trade in-sample il cui PnL
+        #    gonfierebbe il risultato del fold. Il gate sopprime la GENERAZIONE
+        #    (l'esecuzione avviene comunque solo alla barra dopo, già nel test).
+        in_warmup = (params.trade_start_ts is not None
+                     and common_index[i] <= params.trade_start_ts)
+        if not in_warmup:
+            for sym, proba in proba_by_symbol.items():
+                if not np.isnan(proba[i][0]):
+                    action, _ = signal_from_proba(proba[i][TARGET_DOWN], proba[i][TARGET_UP],
+                                                  threshold=params.prob_threshold)
+                    if action != "hold":
+                        pending_actions[sym] = action
 
         # Equity mark-to-market su TUTTE le posizioni aperte
         unrealized = 0.0

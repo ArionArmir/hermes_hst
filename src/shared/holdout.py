@@ -234,11 +234,27 @@ def open_seal(lotto: str, ipotesi: str, n_trials: int, motivazione: str,
             + " Per procedere consapevolmente: acknowledge_burned=True."
         )
 
+    import hashlib
     dati = {}
     for sym in info["simboli"]:
         path = HOLDOUT_DIR / f"{sym}_1h.parquet"
         if not path.exists():
             raise HoldoutViolation(f"Dato sigillato mancante: {path}")
+        # Il valore statistico dell'holdout dipende dal fatto che questi byte non
+        # siano MAI stati toccati dopo il sigillo. seal_holdout.py registra lo
+        # sha256 del file proprio per rilevare manomissioni/corruzione: se il
+        # file è cambiato (ri-download, bit-rot, una sbirciata riscritta) non è
+        # più un holdout e aprirlo restituirebbe dati contaminati come vergini.
+        atteso = info["simboli"][sym].get("sha256")
+        if atteso:
+            reale = hashlib.sha256(path.read_bytes()).hexdigest()
+            if reale != atteso:
+                raise HoldoutViolation(
+                    f"Dato sigillato ALTERATO: {path}. sha256 atteso {atteso[:12]}…, "
+                    f"reale {reale[:12]}…. I byte sono cambiati dopo il sigillo: NON è "
+                    "più un holdout valido. NON aprire — ripristinare il file originale "
+                    "o considerare il lotto perso."
+                )
         dati[sym] = pd.read_parquet(path)
 
     info["stato"] = "APERTO"
