@@ -1,0 +1,3 @@
+asset,mesi,anni,rendimento_ann,eccesso_ann,mesi_eccesso_pos,ic95_basso,ic95_alto,dsr_famiglia,dsr_cumulativo
+USDT,40,3.33,0.0444,-0.0001,0.475,-0.0055,0.0058,0.1191,0.0009
+USDC,40,3.33,0.0473,0.0028,0.475,-0.0033,0.0095,0.3589,0.0065

@@ -45,3 +45,8 @@ dashboard/pids/
 hermes/lib/python3.12/site-packages/pip/_internal/main.py
 site/sitemap.xml.gz
 dump.rdb
+
+# Cartelle degli strumenti agentici (locali, non di progetto)
+.agents/
+.claude/
+.continue/
