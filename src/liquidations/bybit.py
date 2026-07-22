@@ -78,19 +78,22 @@ async def main():
     logger.info("Registratore liquidazioni Bybit: solo raccolta, nessuna decisione")
     redis = RedisClient()
     await redis.connect()
-    buffer = BufferGiornaliero(out_dir=OUT_BYBIT)
+    buffer = BufferGiornaliero(out_dir=OUT_BYBIT, dedup=False)   # verità completa: mai deduplicare
     ultimo_evento = {"ts": datetime.now(timezone.utc).isoformat()}
     backoff = 1
 
     async def flush_e_batti():
         while True:
             await asyncio.sleep(FLUSH_SECONDI)
-            n = buffer.flush()
-            if n:
-                logger.info(f"flush: {n} liquidazioni scritte")
-            await redis.set("heartbeat_liquidations_bybit",
-                            datetime.now(timezone.utc).isoformat())
-            await redis.set("last_liquidation_event_bybit", ultimo_evento["ts"])
+            try:      # per-giro: un errore non deve uccidere il task (vedi main.py)
+                n = buffer.flush()
+                if n:
+                    logger.info(f"flush: {n} liquidazioni scritte")
+                await redis.set("heartbeat_liquidations_bybit",
+                                datetime.now(timezone.utc).isoformat())
+                await redis.set("last_liquidation_event_bybit", ultimo_evento["ts"])
+            except Exception as e:
+                logger.error(f"flush/heartbeat bybit fallito (riprovo): {e}")
 
     asyncio.ensure_future(flush_e_batti())
 

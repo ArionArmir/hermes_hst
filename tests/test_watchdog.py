@@ -245,3 +245,21 @@ def test_inference_fresca_rileva_muta():
         # tutti vecchi → allarme
         client.mget.return_value = [json.dumps({"ts": vecchio}), json.dumps({"ts": vecchio})]
         assert check_inference_fresca(client) is not None
+
+
+def test_config_drift_campo_mancante_rilevato(tmp_path, monkeypatch):
+    """Revisione branch 2026-07-21: un campo ASSENTE dal config live non e'
+    innocuo — pydantic mette il default (0.55) diverso dal dichiarato (0.50).
+    Il vecchio check lo saltava: e' la classe dell'incidente del 2026-07-20."""
+    import hashlib, json
+    from watchdog import check_config_drift
+    import watchdog as w
+    modello = tmp_path / "config" / "models" / "champion.pkl"
+    modello.parent.mkdir(parents=True)
+    modello.write_bytes(b"m")
+    sha = hashlib.sha256(b"m").hexdigest()
+    monkeypatch.setattr(w, "REPO_ROOT", tmp_path)
+    manifest = _manifest_su(tmp_path, {"ml_confidence_threshold": 0.50}, sha)
+    # config live SENZA ml_confidence_threshold
+    problema = check_config_drift(_client_con({"timeframe": "1h"}), manifest)
+    assert problema and "ASSENTE" in problema and "ml_confidence_threshold" in problema

@@ -20,6 +20,15 @@ FASCIA_CHE_CONTA = "RICCO"
 CONSECUTIVI_RICHIESTI = 2
 
 
+def _mesi_adiacenti(mesi: list[str]) -> bool:
+    """True se i mesi 'YYYY-MM' sono consecutivi senza salti. Senza questa
+    verifica (revisione branch 2026-07-21) gen+mar con febbraio SALTATO
+    scattava come 'due consecutivi', contro il docstring: un mese ignoto
+    (pipeline giù) non è una conferma."""
+    indici = [int(m[:4]) * 12 + int(m[5:7]) for m in mesi]
+    return all(b - a == 1 for a, b in zip(indici, indici[1:]))
+
+
 def aggiorna(stato: dict, mese: str, fascia: str, mediana: float) -> tuple[dict, bool]:
     """Registra la lettura del mese (idempotente: ripetere lo stesso mese
     sovrascrive) e dice se il tripwire scatta ORA."""
@@ -30,7 +39,8 @@ def aggiorna(stato: dict, mese: str, fascia: str, mediana: float) -> tuple[dict,
 
     ultimi = storia[-CONSECUTIVI_RICHIESTI:]
     scattato = (len(ultimi) == CONSECUTIVI_RICHIESTI
-                and all(r["fascia"] == FASCIA_CHE_CONTA for r in ultimi))
+                and all(r["fascia"] == FASCIA_CHE_CONTA for r in ultimi)
+                and _mesi_adiacenti([r["mese"] for r in ultimi]))
     gia_scattato = stato.get("scattato", False)
     stato["scattato"] = scattato or gia_scattato
     return stato, scattato and not gia_scattato

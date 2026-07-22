@@ -144,9 +144,17 @@ def check_config_drift(redis_client,
     if raw:                          # Redis vuoto: al prossimo avvio vince il YAML
         live = json.loads(raw)
         dichiarata = manifest["config"]
-        derive += [f"{campo}: live={live[campo]!r} dichiarato={dichiarata[campo]!r}"
-                   for campo in dichiarata
-                   if campo in live and live[campo] != dichiarata[campo]]
+        for campo, atteso in dichiarata.items():
+            if campo not in live:
+                # un campo ASSENTE non è innocuo (revisione branch 2026-07-21):
+                # l'engine fa Config(**data) e pydantic riempie col DEFAULT
+                # (per ml_confidence_threshold è 0.55 ≠ 0.50 dichiarato) → gira
+                # fuori protocollo mentre il vecchio check taceva. È la classe
+                # esatta dell'incidente del 2026-07-20.
+                derive.append(f"{campo}: ASSENTE dal config live (dichiarato {atteso!r}) "
+                              "— pydantic userebbe il default")
+            elif live[campo] != atteso:
+                derive.append(f"{campo}: live={live[campo]!r} dichiarato={atteso!r}")
 
     modello = REPO_ROOT / "config" / "models" / "champion.pkl"
     try:

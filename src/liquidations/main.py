@@ -39,12 +39,19 @@ async def main():
     async def flush_e_batti():
         while True:
             await asyncio.sleep(FLUSH_SECONDI)
-            n = buffer.flush()
-            if n:
-                logger.info(f"flush: {n} liquidazioni scritte")
-            await redis.set("heartbeat_liquidations",
-                            datetime.now(timezone.utc).isoformat())
-            await redis.set("last_liquidation_event", ultimo_evento["ts"])
+            # try per-giro (revisione branch 2026-07-21): senza, un errore di
+            # flush/redis uccideva questo task per sempre (fire-and-forget),
+            # mentre il loop WS continuava ad accumulare in buffer.righe fino
+            # all'OOM e il heartbeat si fermava (watchdog cieco fino a soglia).
+            try:
+                n = buffer.flush()
+                if n:
+                    logger.info(f"flush: {n} liquidazioni scritte")
+                await redis.set("heartbeat_liquidations",
+                                datetime.now(timezone.utc).isoformat())
+                await redis.set("last_liquidation_event", ultimo_evento["ts"])
+            except Exception as e:
+                logger.error(f"flush/heartbeat fallito (riprovo al prossimo giro): {e}")
 
     asyncio.ensure_future(flush_e_batti())
 

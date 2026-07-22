@@ -11,6 +11,7 @@ un pre-registro quando ce ne sarà abbastanza (la data di nascita del dataset
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,9 +50,17 @@ class BufferGiornaliero:
     """Accumula righe e le scrive nel parquet del giorno (merge col file
     esistente: i restart non perdono né duplicano giornate)."""
 
-    def __init__(self, out_dir: Path = OUT_DIR, max_righe: int = 200):
+    def __init__(self, out_dir: Path = OUT_DIR, max_righe: int = 200,
+                 dedup: bool = True):
         self.out_dir = out_dir
         self.max_righe = max_righe
+        # dedup su (ts,symbol,qty): difende Binance (campionato, 1/s/simbolo →
+        # duplicati veri impossibili) dai riprocessamenti. Per Bybit va SPENTO
+        # (revisione branch 2026-07-21): allLiquidation pubblica TUTTI gli
+        # eventi, e due liquidazioni distinte con stessa tripletta sono comuni
+        # (taglie tonde, stesso ms) — deduparle mutila la verità completa e
+        # falsa quota_censura verso zero.
+        self.dedup = dedup
         self.righe: list[dict] = []
 
     def aggiungi(self, riga: dict) -> bool:
@@ -68,10 +77,16 @@ class BufferGiornaliero:
         for giorno, gruppo in df.groupby(df["ts"].dt.date):
             path = self.out_dir / f"{giorno}.parquet"
             if path.exists():
-                gruppo = (pd.concat([pd.read_parquet(path), gruppo])
-                            .drop_duplicates(subset=["ts", "symbol", "qty"])
-                            .sort_values("ts"))
-            gruppo.reset_index(drop=True).to_parquet(path)
+                gruppo = pd.concat([pd.read_parquet(path), gruppo])
+                if self.dedup:
+                    gruppo = gruppo.drop_duplicates(subset=["ts", "symbol", "qty"])
+                gruppo = gruppo.sort_values("ts")
+            # scrittura atomica (revisione branch 2026-07-21): tmp + os.replace,
+            # o un crash a metà to_parquet troncherebbe l'INTERA giornata (il
+            # flush riscrive tutto il file) e ogni read successiva esploderebbe.
+            tmp = path.with_suffix(".parquet.tmp")
+            gruppo.reset_index(drop=True).to_parquet(tmp)
+            os.replace(tmp, path)
             scritte += len(gruppo)
         n = len(self.righe)
         self.righe = []

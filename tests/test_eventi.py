@@ -188,3 +188,17 @@ def test_depeg_soglia_e_chiave_oraria():
     assert evento_depeg(1.0006, adesso) is None            # 0.06%: pace
     e = evento_depeg(0.9938, adesso)                       # 0.62%: allarme
     assert e["severita"] == "allarme" and e["chiave"] == "depeg:USDC:2026-07-21 12"
+
+
+def test_delisting_matcha_simboli_concatenati():
+    """Revisione branch 2026-07-21: le notice futures elencano i simboli
+    CONCATENATI (TRXUSDT); il vecchio match solo BASE/QUOTE era cieco a un
+    delisting di un nostro simbolo → nessun allarme."""
+    from src.eventi.annunci import simboli_citati, eventi_da_annunci
+    assert simboli_citati("Will Delist TRXUSDT, 1000SHIBUSDT Perpetual",
+                          {"TRXUSDT", "BTCUSDT"}) == {"TRXUSDT"}
+    assert simboli_citati("Delist BTC/USDT", {"BTCUSDT"}) == {"BTCUSDT"}   # anche slash
+    # il simbolo nel solo titolo fa scattare l'allarme
+    articoli = [{"code": "z", "title": "Binance Futures Will Delist TRXUSDT Perpetual"}]
+    eventi, _ = eventi_da_annunci(articoli, {"z": ""}, {"motore": {"TRXUSDT", "BTCUSDT"}}, [])
+    assert eventi[0]["severita"] == "allarme" and "TRXUSDT" in eventi[0]["dettaglio"]

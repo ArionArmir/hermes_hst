@@ -25,9 +25,27 @@ _H = {"User-Agent": "Mozilla/5.0"}
 # ---- funzioni pure (testate) ----------------------------------------------
 
 def estrai_coppie(corpo: str) -> set[str]:
-    """Le coppie 'BASE/QUOTE' citate nel corpo di una notice."""
+    """Le coppie 'BASE/QUOTE' citate nel corpo di una notice (per il conteggio
+    informativo)."""
     return {f"{b}{q}" for b, q in re.findall(r"\b([A-Z0-9]{2,15})/([A-Z0-9]{2,10})\b",
                                              corpo or "")}
+
+
+def simboli_citati(testo: str, simboli: set) -> set:
+    """Quali dei NOSTRI simboli noti sono citati nel testo — sia concatenati
+    (BTCUSDT) sia con slash (BTC/USDT). Cerca i simboli noti invece di
+    estrarli genericamente: le notice futures Binance li elencano CONCATENATI,
+    forma che estrai_coppie (solo BASE/QUOTE) mancava — un delisting di un
+    nostro simbolo restava senza allarme (revisione branch 2026-07-21)."""
+    su = (testo or "").upper()
+    trovati = set()
+    for sym in simboli:
+        base = sym[:-4] if sym.endswith("USDT") else sym
+        quote = sym[len(base):] or "USDT"
+        if (re.search(rf"\b{re.escape(sym)}\b", su)
+                or re.search(rf"\b{re.escape(base)}/{re.escape(quote)}\b", su)):
+            trovati.add(sym)
+    return trovati
 
 
 def eventi_da_annunci(articoli: list[dict], corpi: dict, universi: dict,
@@ -42,9 +60,12 @@ def eventi_da_annunci(articoli: list[dict], corpi: dict, universi: dict,
         if not codice or codice in visti:
             continue
         visti.append(codice)
-        coppie = estrai_coppie(corpi.get(codice, ""))
-        colpiti = {nome: sorted(coppie & simboli)
-                   for nome, simboli in universi.items() if coppie & simboli}
+        corpo = corpi.get(codice, "")
+        # titolo + corpo: le notice spesso nominano i simboli nel solo titolo
+        testo = f"{art.get('title', '')} {corpo}"
+        coppie = estrai_coppie(corpo)                 # conteggio informativo
+        colpiti = {nome: sorted(cit) for nome, simboli in universi.items()
+                   if (cit := simboli_citati(testo, simboli))}
         if colpiti:
             e = _evento("delisting", "allarme",
                         f"Delisting tocca i nostri universi: {art.get('title', '')[:60]}",

@@ -53,3 +53,18 @@ def test_marker_scritto_solo_allo_scatto(tmp_path, monkeypatch):
     assert not (tmp_path / "M").exists()
     T.salva({"storia": [], "scattato": True}, scattato_ora=True)
     assert "pre-registro" in (tmp_path / "M").read_text()
+
+
+def test_scatto_richiede_mesi_adiacenti():
+    """Revisione branch 2026-07-21: due RICCO con un mese SALTATO in mezzo non
+    sono 'consecutivi' — un mese ignoto (pipeline giù) non è conferma."""
+    from src.invest.tripwire import aggiorna
+    s = {"storia": [], "scattato": False}
+    s, _ = aggiorna(s, "2026-01", "RICCO", 0.09)
+    s, salto = aggiorna(s, "2026-03", "RICCO", 0.09)       # feb mancante
+    assert salto is False
+    # ma due mesi davvero adiacenti scattano
+    s2 = {"storia": [], "scattato": False}
+    s2, _ = aggiorna(s2, "2026-01", "RICCO", 0.09)
+    s2, ok = aggiorna(s2, "2026-02", "RICCO", 0.09)
+    assert ok is True

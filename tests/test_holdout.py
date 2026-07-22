@@ -160,3 +160,18 @@ def test_manifesto_mancante_solleva(tmp_path, monkeypatch):
     monkeypatch.setattr(H, "MANIFEST_PATH", tmp_path / "assente.yaml")
     with pytest.raises(HoldoutViolation, match="Nessun sigillo"):
         H.sealed_symbols()
+
+
+def test_assert_research_allowed_stringa_blocca(monkeypatch):
+    """Revisione branch 2026-07-21: una STRINGA invece di lista non deve
+    passare muta — set() sui caratteri renderebbe l'intersezione vuota."""
+    import pytest
+    from src.shared import holdout
+    monkeypatch.setattr(holdout, "sealed_symbols", lambda lotto=None: ["BCHUSDT", "AAVEUSDT"])
+    with pytest.raises(holdout.HoldoutViolation):
+        holdout.assert_research_allowed("BCHUSDT")          # stringa
+    with pytest.raises(holdout.HoldoutViolation):
+        holdout.assert_research_allowed("bchusdt")          # anche minuscolo
+    with pytest.raises(holdout.HoldoutViolation):
+        holdout.assert_research_allowed(["BCHUSDT"])        # lista: bloccata come sempre
+    holdout.assert_research_allowed(["BTCUSDT"])            # non sigillato: passa

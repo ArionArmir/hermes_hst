@@ -44,3 +44,16 @@ def test_buffer_riusato_su_directory_separata(tmp_path):
     assert b.flush() == 1
     df = pd.read_parquet(next(tmp_path.glob("*.parquet")))
     assert df.iloc[0]["symbol"] == "ROSEUSDT"
+
+
+def test_bybit_non_deduplica_eventi_simultanei_distinti(tmp_path):
+    """Revisione branch 2026-07-21: allLiquidation pubblica TUTTI gli eventi;
+    due liquidazioni distinte con stessa (ts,symbol,qty) NON vanno collassate,
+    o quota_censura misurerebbe una censura falsa verso zero."""
+    ev = {"T": 1784500000000, "s": "ROSEUSDT", "S": "Sell", "v": "20000", "p": "0.045"}
+    for _ in range(2):                                     # due flush separati
+        b = BufferGiornaliero(out_dir=tmp_path, dedup=False)
+        b.aggiungi(normalizza(dict(ev)))
+        b.flush()
+    df = pd.read_parquet(next(tmp_path.glob("*.parquet")))
+    assert len(df) == 2                                    # entrambi conservati

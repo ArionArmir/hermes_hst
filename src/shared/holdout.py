@@ -94,7 +94,14 @@ def assert_research_allowed(symbols) -> None:
     Il fallimento silenzioso qui costerebbe l'unica risorsa non rinnovabile del
     progetto, quindi si solleva invece di avvisare.
     """
-    contaminati = sorted(set(symbols) & set(sealed_symbols()))
+    # Normalizzazione difensiva (revisione branch 2026-07-21): una STRINGA
+    # invece di una lista renderebbe set() l'insieme dei CARATTERI, e
+    # l'intersezione coi nomi-simbolo interi sarebbe vuota → il guardiano
+    # passerebbe MUTO proprio sul simbolo sigillato. Forziamo lista + upper.
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    richiesti = {str(s).upper() for s in symbols}
+    contaminati = sorted(richiesti & {s.upper() for s in sealed_symbols()})
     if contaminati:
         raise HoldoutViolation(
             f"Ricerca su simboli dell'HOLDOUT: {contaminati}. "
