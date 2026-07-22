@@ -127,6 +127,26 @@ def test_seed_from_history_reconstructs_consecutive_losses_and_trips():
     assert "ricostruito da storico" in cb.status()["reason"]
 
 
+def test_seed_reconstructs_active_cooldown_even_if_last_trade_is_a_win():
+    # 3 perdite consecutive armano il cooldown (fino a 10:40 + 60min = 11:40);
+    # una vittoria successiva azzera il contatore ma NON deve cancellare il
+    # cooldown ancora in corso. Prima del fix, ricostruendo dalle sole perdite
+    # in coda, un riavvio dopo la vittoria riapriva il trading ~un'ora prima.
+    trades = pd.DataFrame([
+        {"timestamp": "2026-03-01T10:00:00+00:00", "pnl": -3.0, "capital_after": 997.0},
+        {"timestamp": "2026-03-01T10:20:00+00:00", "pnl": -3.0, "capital_after": 994.0},
+        {"timestamp": "2026-03-01T10:40:00+00:00", "pnl": -3.0, "capital_after": 991.0},
+        {"timestamp": "2026-03-01T10:50:00+00:00", "pnl": +5.0, "capital_after": 996.0},
+    ])
+    cb = CircuitBreaker(_params(max_consecutive_losses=3))
+
+    cb.seed_from_history(trades, current_capital=996.0)
+
+    assert cb._consecutive_losses == 0   # la vittoria in coda azzera il contatore
+    assert cb.is_tripped(now=datetime(2026, 3, 1, 11, 0, tzinfo=timezone.utc))   # dentro il cooldown
+    assert not cb.is_tripped(now=datetime(2026, 3, 1, 11, 45, tzinfo=timezone.utc))  # scaduto
+
+
 def test_seed_from_history_stops_counting_at_a_win():
     trades = pd.DataFrame([
         {"timestamp": "2026-03-01T10:00:00+00:00", "pnl": -3.0, "capital_after": 997.0},

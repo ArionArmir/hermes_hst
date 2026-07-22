@@ -221,13 +221,35 @@ class CircuitBreaker:
                     self._daily_trip = True
                     self._trip_reason = f"perdita giornaliera {daily_pct:.1%} (ricostruita dopo riavvio)"
 
-        if (self.params.max_consecutive_losses is not None
-                and self._consecutive_losses >= self.params.max_consecutive_losses):
-            self._tripped_until = last_ts.to_pydatetime() + timedelta(
-                minutes=self.params.consecutive_loss_cooldown_minutes)
-            self._trip_reason = (
-                f"{self._consecutive_losses} perdite consecutive "
-                f"(ricostruito da storico dopo riavvio)"
-            )
+        # Cooldown da perdite consecutive: replay dell'INTERA storia (post
+        # eventuale reset), non solo delle perdite in coda. In live ogni perdita
+        # col contatore >= soglia ri-arma _tripped_until, e una vittoria azzera
+        # il contatore ma NON cancella un cooldown già in corso (is_tripped lo
+        # smonta solo alla scadenza). Ricostruire dalle sole perdite finali
+        # perdeva il cooldown quando l'ultimo trade chiuso era una vittoria,
+        # riaprendo il trading fino a un giorno troppo presto dopo un riavvio.
+        if self.params.max_consecutive_losses is not None:
+            cooldown = timedelta(minutes=self.params.consecutive_loss_cooldown_minutes)
+            sim = 0
+            armato_fino = None
+            for ts, pnl in zip(pd.to_datetime(trades_df["timestamp"]), trades_df["pnl"]):
+                if pnl < 0:
+                    sim += 1
+                    if sim >= self.params.max_consecutive_losses:
+                        if ts.tzinfo is None:
+                            ts = ts.tz_localize("UTC")
+                        armato_fino = ts.to_pydatetime() + cooldown
+                else:
+                    sim = 0
+            # _tripped_until impostato incondizionatamente: è is_tripped a
+            # decidere la scadenza (e ad auto-resettarsi se già passata),
+            # coerente con il resto del modulo e col now passato dal chiamante.
+            if armato_fino is not None:
+                self._tripped_until = armato_fino
+                self._trip_reason = (
+                    f"cooldown perdite consecutive attivo fino a "
+                    f"{armato_fino:%Y-%m-%d %H:%M} UTC "
+                    "(ricostruito da storico dopo riavvio)"
+                )
 
         self._update_drawdown(current_capital)

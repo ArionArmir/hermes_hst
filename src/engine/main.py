@@ -287,8 +287,11 @@ class TradingEngine:
                 reset_after, reset_capital = r.get("ts"), r.get("capital")
             except (json.JSONDecodeError, AttributeError):
                 pass
-        self.circuit_breaker.seed_from_history(trades_df, self.capital,
-                                               reset_after=reset_after, reset_capital=reset_capital)
+        try:
+            self.circuit_breaker.seed_from_history(trades_df, self.capital,
+                                                   reset_after=reset_after, reset_capital=reset_capital)
+        except Exception as e:
+            logger.warning(f"⚠️ Seed del circuit breaker fallito, parto senza stato ricostruito: {e}")
         status = self.circuit_breaker.status()
         if status["tripped"]:
             logger.warning(f"⛔ Circuit breaker già attivo dopo il riavvio: {status['reason']}")

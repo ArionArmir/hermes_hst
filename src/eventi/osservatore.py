@@ -35,10 +35,14 @@ def nuovi_da_signals(df, cursore: int) -> tuple[list[dict], int]:
     nuove = df[df["id"] > cursore].sort_values("id")
     for r in nuove.itertuples():
         if r.outcome == "OPENED":
+            # chiave per-id: due aperture distinte stesso simbolo+azione nella
+            # stessa ora hanno lo stesso titolo e la dedup oraria (severità
+            # "allarme") scarterebbe la seconda, perdendo un evento reale.
             eventi.append(_evento("trade_forward", "allarme",
                                   f"Trade forward aperto: {r.symbol} {r.action}",
                                   f"confidenza pesata {r.weighted_confidence:.3f}",
-                                  ts=r.timestamp))
+                                  ts=r.timestamp,
+                                  chiave=f"trade_forward:aperto:{r.id}"))
         elif r.outcome == "SENTIMENT_VETO":
             eventi.append(_evento("veto_sentiment", "nota",
                                   f"Veto sentiment su {r.symbol}",
@@ -96,12 +100,12 @@ def eventi_watchdog(nuovi_allarmi: dict, rientrati: list) -> list[dict]:
 
 
 def _evento(tipo: str, severita: str, titolo: str, dettaglio: str = "",
-            ts: str | None = None) -> dict:
+            ts: str | None = None, chiave: str | None = None) -> dict:
     assert severita in SEVERITA
     return {"ts": str(ts) if ts else datetime.now(timezone.utc).isoformat(),
             "tipo": tipo, "severita": severita,
             "titolo": titolo, "dettaglio": dettaglio,
-            "chiave": f"{tipo}:{titolo}"}
+            "chiave": chiave or f"{tipo}:{titolo}"}
 
 
 def _impronta_dedup(e: dict) -> tuple:
@@ -160,7 +164,15 @@ def osserva_tutto(nuovi_allarmi: dict | None = None,
 
     cursori = {}
     if PATH_CURSORI.exists():
-        cursori = json.loads(PATH_CURSORI.read_text())
+        try:
+            cursori = json.loads(PATH_CURSORI.read_text())
+        except (json.JSONDecodeError, ValueError) as e:
+            # un cursori.json troncato (crash a metà scrittura) non deve
+            # bloccare per sempre l'osservatore: si riparte da zero (il dedup di
+            # registra_eventi assorbe le poche ri-emissioni) e la scrittura
+            # atomica sotto ripristina il file sano.
+            print(f"[eventi] cursori.json illeggibile, riparto da zero: {e}")
+            cursori = {}
 
     eventi = []
     # letture incrementali per id crescente dal cursore (revisione branch
@@ -187,5 +199,9 @@ def osserva_tutto(nuovi_allarmi: dict | None = None,
 
     scritti = registra_eventi(eventi)
     DIR_EVENTI.mkdir(parents=True, exist_ok=True)
-    PATH_CURSORI.write_text(json.dumps(cursori))
+    # scrittura atomica: un crash a metà write_text lasciava un cursori.json
+    # troncato che poi bloccava l'osservatore per sempre (json.loads in errore)
+    tmp = PATH_CURSORI.with_name(PATH_CURSORI.name + ".tmp")
+    tmp.write_text(json.dumps(cursori))
+    tmp.replace(PATH_CURSORI)
     return scritti

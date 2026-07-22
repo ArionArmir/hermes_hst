@@ -76,6 +76,15 @@ def decide_promotion(challenger, champion, val_candles: Dict[str, pd.DataFrame],
     if not windows:
         return None
 
+    # NOTA (confound transitorio noto): challenger e champion passano lo stesso
+    # prob_threshold in backtest_params. Alla PRIMA promozione dopo l'introduzione
+    # della calibrazione, il challenger è calibrato (sigmoid) e il champion su
+    # disco può essere ancora grezzo: probabilità su scale diverse → conteggio
+    # trade diverso a parità di soglia, quindi il confronto di quel singolo ciclo
+    # è viziato dallo shift di scala, non solo dalla skill. Si auto-risolve dal
+    # ciclo successivo (anche il champion è calibrato). Non compensato qui a
+    # posta: una ri-taratura della soglia per-modello sarebbe più fragile del
+    # difetto che risolve.
     challenger_pnls, champion_pnls = [], []
     for i, window in enumerate(windows):
         c_result = backtest_joint(challenger, window, backtest_params)

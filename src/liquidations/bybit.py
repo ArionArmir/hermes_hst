@@ -122,12 +122,18 @@ async def main():
                             if riga:
                                 ultimo_evento["ts"] = riga["ts"].isoformat()
                                 if buffer.aggiungi(riga):
-                                    buffer.flush()
+                                    try:
+                                        buffer.flush()
+                                    except Exception as e:
+                                        logger.error(f"flush inline fallito (le righe restano nel buffer, ritenta il task periodico): {e}")
                 finally:
                     compito_ping.cancel()
         except Exception as e:
             logger.warning(f"stream caduto ({e}), riconnessione in {backoff}s")
-            buffer.flush()
+            try:
+                buffer.flush()
+            except Exception as e2:
+                logger.error(f"flush in riconnessione fallito (ritenta il task periodico): {e2}")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 

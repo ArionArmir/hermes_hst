@@ -232,7 +232,7 @@ def render_polso_forward():
     """C: a che punto è l'esperimento — il cruscotto del perché siamo qui."""
     from datetime import date, datetime, timezone
 
-    avvio, lettura = date(2026, 7, 14), date(2027, 1, 19)
+    avvio, lettura = date(2026, 7, 19), date(2027, 1, 19)
     aperti = _trade_aperti_forward()
     trascorsi = (date.today() - avvio).days
     totali = (lettura - avvio).days

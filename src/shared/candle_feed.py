@@ -47,6 +47,11 @@ class CandleFeed:
                 self.max_age_seconds = max(300, timeframe_minutes(interval) * 60 * 2)
             except ValueError:
                 self.max_age_seconds = 300
+        # Il fast-path di get_candles serve la cache senza rifetchare finché è
+        # più recente di refresh_seconds: non può quindi durare oltre il tetto
+        # di staleness, o servirebbe candele più vecchie di max_age_seconds
+        # scavalcando la guardia anti-dati-stantii (per refresh > max_age).
+        self.refresh_seconds = min(self.refresh_seconds, self.max_age_seconds)
         self._cache: Dict[str, pd.DataFrame] = {}
         self._last_fetch: Dict[str, float] = {}
         self._last_success: Dict[str, datetime] = {}

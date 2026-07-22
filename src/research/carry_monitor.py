@@ -27,11 +27,14 @@ STORICO_CARRY = {"2021": 0.3549, "2022": 0.0038, "2023": 0.0649,
                  "2024": 0.1305, "2025": 0.0189, "2026H1": -0.0053}
 
 
-def annualizza_funding(rates: list[float]) -> float:
-    """Media degli eventi (uno ogni 8h) -> tasso annuo."""
-    if not rates:
+def annualizza_funding(rates: list[float], giorni_finestra: float) -> float:
+    """Somma del funding nella finestra -> tasso annuo, INDIPENDENTE dalla
+    frequenza di settlement (8h/4h/1h). Prima assumeva 3 eventi/giorno
+    (media × 3 × 365) e sballava di ~8x sui simboli a funding orario, oltre a
+    campionarne solo ~4 giorni per via del limit tarato sull'8h."""
+    if not rates or giorni_finestra <= 0:
         return 0.0
-    return sum(rates) / len(rates) * 3 * 365
+    return sum(rates) * 365 / giorni_finestra
 
 
 def fascia_regime(mediana_annua: float) -> tuple[str, str]:
@@ -68,12 +71,14 @@ def funding_corrente(giorni: int = 30) -> dict | None:
     per_simbolo = {}
     for s in simboli:
         try:
+            # limit=1000 (max Binance): copre 30gg anche a funding orario
+            # (~720 eventi), dove 3*giorni+10 ne prendeva solo ~4 giorni.
             r = requests.get(f"{FAPI}/fapi/v1/fundingRate",
-                             params={"symbol": s, "limit": 3 * giorni + 10}, timeout=10)
+                             params={"symbol": s, "limit": 1000}, timeout=10)
             eventi = [float(e["fundingRate"]) for e in r.json()
                       if float(e.get("fundingTime", 0)) >= da]
             if eventi:
-                per_simbolo[s] = annualizza_funding(eventi)
+                per_simbolo[s] = annualizza_funding(eventi, giorni)
         except Exception:
             continue
     if len(per_simbolo) < 10:

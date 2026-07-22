@@ -17,9 +17,14 @@ from src.research.carry_monitor import (annualizza_basis, annualizza_funding,
 
 
 def test_annualizzazione_funding():
-    # 0.01% a evento, 3 eventi/giorno -> ~10.95% annuo
-    assert annualizza_funding([0.0001] * 90) == pytest.approx(0.1095)
-    assert annualizza_funding([]) == 0.0
+    # 0.01% a evento, 90 eventi su 30 giorni -> ~10.95% annuo, a prescindere
+    # dalla frequenza di settlement (somma nella finestra scalata all'anno)
+    assert annualizza_funding([0.0001] * 90, giorni_finestra=30) == pytest.approx(0.1095)
+    # 30 giorni a funding ORARIO (720 eventi) allo stesso tasso danno lo stesso
+    # annuo — col vecchio ×3×365 sarebbe stato ~8x
+    assert annualizza_funding([0.0001] * 720, giorni_finestra=30) == pytest.approx(0.876)
+    assert annualizza_funding([], giorni_finestra=30) == 0.0
+    assert annualizza_funding([0.0001], giorni_finestra=0) == 0.0
 
 
 def test_fasce_descrittive():

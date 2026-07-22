@@ -50,6 +50,14 @@ else:
 st.subheader("Simulazione: 300 €/mese, dati reali")
 vwce = _serie("VWCE")
 spx = _serie("SPX")
+# un refresh mensile fallito lascia i parquet vuoti/mancanti: senza guardia
+# vwce.index[-1]/[0] sotto solleverebbe IndexError e la pagina crasherebbe
+# proprio nel punto che dovrebbe SEGNALARE il refresh fermo.
+mancanti = [n for n, s in (("VWCE", vwce), ("SPX", spx)) if s.empty]
+if mancanti:
+    st.warning(f"Serie non disponibili: {', '.join(mancanti)}. Il job mensile "
+               "(data/invest) non ha prodotto i parquet — refresh da controllare.")
+    st.stop()
 serie = {"VWCE (All-World, acc.)": vwce, "S&P 500 (indice prezzo)": spx}
 # freschezza esplicita (revisione branch 2026-07-21): un refresh fallito
 # lascerebbe i parquet fermi in silenzio — l'ultimo mese lo rende visibile
